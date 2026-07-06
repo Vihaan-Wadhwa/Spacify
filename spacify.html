@@ -1,0 +1,640 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spacify — AI-Powered Floor Plans</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0a0a0a;
+    --bg2: #111111;
+    --bg3: #1a1a1a;
+    --border: rgba(255,255,255,0.08);
+    --text: #f0ede8;
+    --text2: #888880;
+    --text3: #444440;
+    --accent: #c8f0a0;
+    --accent2: #a8d880;
+    --radius: 12px;
+    --transition: 0.3s cubic-bezier(0.4,0,0.2,1);
+  }
+  [data-theme="light"] {
+    --bg: #f8f6f2;
+    --bg2: #ffffff;
+    --bg3: #eeece8;
+    --border: rgba(0,0,0,0.08);
+    --text: #1a1a18;
+    --text2: #777770;
+    --text3: #bbbbaa;
+    --accent: #2a7a00;
+    --accent2: #1f6000;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    font-family: 'DM Sans', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    font-size: 16px;
+    line-height: 1.6;
+    transition: background var(--transition), color var(--transition);
+    min-height: 100vh;
+  }
+
+  /* NAV */
+  nav {
+    position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 40px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg);
+    transition: background var(--transition), border-color var(--transition);
+    backdrop-filter: blur(12px);
+  }
+  .nav-logo {
+    font-family: 'DM Serif Display', serif;
+    font-size: 22px;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .nav-logo span { color: var(--accent); }
+  .nav-right { display: flex; align-items: center; gap: 24px; }
+  .nav-links { display: flex; gap: 28px; list-style: none; }
+  .nav-links a {
+    font-size: 13px; font-weight: 400; color: var(--text2);
+    text-decoration: none; letter-spacing: 0.02em;
+    transition: color var(--transition);
+  }
+  .nav-links a:hover { color: var(--text); }
+  .theme-btn {
+    width: 36px; height: 36px; border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--bg3);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    transition: all var(--transition);
+    color: var(--text2);
+    font-size: 15px;
+  }
+  .theme-btn:hover { border-color: var(--text3); color: var(--text); }
+
+  /* HERO */
+  .hero {
+    min-height: 100vh;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    text-align: center;
+    padding: 120px 40px 80px;
+    position: relative;
+    overflow: hidden;
+  }
+  .hero-grid {
+    position: absolute; inset: 0;
+    background-image:
+      linear-gradient(var(--border) 1px, transparent 1px),
+      linear-gradient(90deg, var(--border) 1px, transparent 1px);
+    background-size: 60px 60px;
+    mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 30%, transparent 80%);
+    -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 30%, transparent 80%);
+  }
+  .hero-tag {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--accent); border: 1px solid rgba(200,240,160,0.2);
+    padding: 5px 14px; border-radius: 20px;
+    margin-bottom: 28px;
+    background: rgba(200,240,160,0.05);
+    opacity: 0; animation: fadeUp 0.6s 0.2s forwards;
+  }
+  .hero h1 {
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(42px, 7vw, 88px);
+    line-height: 1.05;
+    letter-spacing: -0.03em;
+    color: var(--text);
+    max-width: 800px;
+    margin-bottom: 24px;
+    opacity: 0; animation: fadeUp 0.6s 0.35s forwards;
+  }
+  .hero h1 em { font-style: italic; color: var(--text2); }
+  .hero p {
+    font-size: 17px; font-weight: 300; color: var(--text2);
+    max-width: 440px; line-height: 1.7;
+    margin-bottom: 44px;
+    opacity: 0; animation: fadeUp 0.6s 0.5s forwards;
+  }
+  .hero-cta {
+    display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+    opacity: 0; animation: fadeUp 0.6s 0.65s forwards;
+  }
+  .btn-primary {
+    padding: 13px 28px; border-radius: var(--radius);
+    background: var(--text); color: var(--bg);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px; font-weight: 500;
+    border: none; cursor: pointer;
+    transition: opacity var(--transition), transform var(--transition);
+    text-decoration: none;
+  }
+  .btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
+  .btn-secondary {
+    padding: 13px 28px; border-radius: var(--radius);
+    background: transparent; color: var(--text2);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px; font-weight: 400;
+    border: 1px solid var(--border); cursor: pointer;
+    transition: all var(--transition);
+    text-decoration: none;
+  }
+  .btn-secondary:hover { color: var(--text); border-color: var(--text3); }
+
+  /* DEMO CARD */
+  .hero-visual {
+    margin-top: 72px;
+    width: 100%; max-width: 780px;
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    background: var(--bg2);
+    overflow: hidden;
+    opacity: 0; animation: fadeUp 0.8s 0.8s forwards;
+    position: relative;
+  }
+  .demo-topbar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg3);
+  }
+  .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .dot.r { background: #ff5f57; }
+  .dot.y { background: #febc2e; }
+  .dot.g { background: #28c840; }
+  .demo-label { font-size: 12px; color: var(--text3); margin-left: 8px; letter-spacing: 0.05em; }
+  .demo-body {
+    display: grid; grid-template-columns: 1fr 240px;
+    min-height: 340px;
+  }
+  .demo-canvas {
+    padding: 28px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg);
+    position: relative;
+  }
+  /* Floor plan SVG */
+  .floor-plan { width: 100%; max-width: 380px; }
+  .demo-sidebar {
+    border-left: 1px solid var(--border);
+    padding: 20px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .sidebar-section { }
+  .sidebar-section h4 { font-size: 10px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text3); margin-bottom: 10px; }
+  .room-tag {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-size: 11px; padding: 4px 9px; border-radius: 6px;
+    margin: 2px; cursor: default;
+    border: 1px solid var(--border);
+    color: var(--text2); background: var(--bg3);
+    transition: all 0.2s;
+  }
+  .room-tag:hover { color: var(--text); border-color: var(--text3); }
+  .room-tag.active { background: rgba(200,240,160,0.1); color: var(--accent); border-color: rgba(200,240,160,0.3); }
+  .input-row { display: flex; flex-direction: column; gap: 6px; }
+  .input-row label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.08em; }
+  .input-row input {
+    background: var(--bg3); border: 1px solid var(--border);
+    border-radius: 7px; padding: 7px 10px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px; color: var(--text);
+    outline: none; transition: border-color 0.2s;
+  }
+  .input-row input:focus { border-color: var(--text3); }
+  .generate-btn {
+    margin-top: auto; width: 100%;
+    padding: 10px; border-radius: 8px;
+    background: var(--accent); color: #0a1a00;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px; font-weight: 500;
+    border: none; cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .generate-btn:hover { opacity: 0.85; }
+
+  /* SECTION */
+  section { padding: 100px 40px; max-width: 1100px; margin: 0 auto; }
+  .section-eyebrow {
+    font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 16px;
+  }
+  .section-heading {
+    font-family: 'DM Serif Display', serif;
+    font-size: clamp(32px, 4vw, 52px);
+    letter-spacing: -0.02em; line-height: 1.1;
+    color: var(--text); margin-bottom: 16px;
+  }
+  .section-sub {
+    font-size: 16px; font-weight: 300; color: var(--text2);
+    max-width: 500px; line-height: 1.7;
+  }
+
+  /* HOW IT WORKS */
+  .steps {
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: 1px; background: var(--border);
+    border: 1px solid var(--border); border-radius: 16px;
+    overflow: hidden; margin-top: 60px;
+  }
+  .step {
+    background: var(--bg2); padding: 36px 32px;
+    transition: background var(--transition);
+  }
+  .step:hover { background: var(--bg3); }
+  .step-num {
+    font-family: 'DM Serif Display', serif;
+    font-size: 42px; color: var(--text3);
+    line-height: 1; margin-bottom: 20px;
+  }
+  .step h3 { font-size: 16px; font-weight: 500; color: var(--text); margin-bottom: 8px; }
+  .step p { font-size: 14px; color: var(--text2); font-weight: 300; line-height: 1.65; }
+
+  /* FEATURES */
+  .features-grid {
+    display: grid; grid-template-columns: repeat(2, 1fr);
+    gap: 16px; margin-top: 60px;
+  }
+  .feature-card {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 28px 28px;
+    background: var(--bg2);
+    transition: border-color var(--transition), background var(--transition);
+  }
+  .feature-card:hover { border-color: var(--text3); background: var(--bg3); }
+  .feature-card.wide { grid-column: span 2; }
+  .feat-icon { font-size: 22px; margin-bottom: 14px; }
+  .feature-card h3 { font-size: 15px; font-weight: 500; color: var(--text); margin-bottom: 6px; }
+  .feature-card p { font-size: 13px; color: var(--text2); font-weight: 300; line-height: 1.65; }
+
+  /* FORM SECTION */
+  .form-wrapper {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 60px; align-items: start;
+    margin-top: 60px;
+  }
+  .form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+  .form-group label { font-size: 12px; font-weight: 500; color: var(--text2); letter-spacing: 0.04em; }
+  .form-group input, .form-group select, .form-group textarea {
+    background: var(--bg2); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px; color: var(--text);
+    outline: none; transition: border-color 0.2s;
+    width: 100%;
+  }
+  .form-group input:focus, .form-group select:focus, .form-group textarea:focus {
+    border-color: rgba(200,240,160,0.4);
+  }
+  .form-group select option { background: var(--bg2); }
+  .form-group textarea { resize: vertical; min-height: 80px; }
+  .room-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .room-chip {
+    padding: 6px 12px; border-radius: 20px;
+    border: 1px solid var(--border);
+    font-size: 12px; color: var(--text2);
+    cursor: pointer; transition: all 0.2s;
+    background: var(--bg2);
+    user-select: none;
+  }
+  .room-chip.selected { background: rgba(200,240,160,0.1); color: var(--accent); border-color: rgba(200,240,160,0.35); }
+  .submit-btn {
+    width: 100%; padding: 14px; border-radius: 10px;
+    background: var(--text); color: var(--bg);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px; font-weight: 500;
+    border: none; cursor: pointer;
+    margin-top: 8px;
+    transition: opacity 0.2s, transform 0.2s;
+  }
+  .submit-btn:hover { opacity: 0.85; transform: translateY(-1px); }
+  .form-info h3 { font-family: 'DM Serif Display', serif; font-size: 28px; color: var(--text); margin-bottom: 12px; letter-spacing: -0.02em; }
+  .form-info p { font-size: 14px; color: var(--text2); font-weight: 300; line-height: 1.7; margin-bottom: 24px; }
+  .info-list { list-style: none; display: flex; flex-direction: column; gap: 12px; }
+  .info-list li { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; color: var(--text2); }
+  .info-list li::before { content: "→"; color: var(--accent); flex-shrink: 0; }
+
+  /* FOOTER */
+  footer {
+    border-top: 1px solid var(--border);
+    padding: 32px 40px;
+    display: flex; align-items: center; justify-content: space-between;
+    max-width: 100%;
+  }
+  .footer-logo { font-family: 'DM Serif Display', serif; font-size: 18px; color: var(--text); }
+  .footer-logo span { color: var(--accent); }
+  footer p { font-size: 12px; color: var(--text3); }
+
+  /* DIVIDER */
+  .divider { border: none; border-top: 1px solid var(--border); }
+
+  /* ANIMATIONS */
+  @keyframes fadeUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.6s, transform 0.6s; }
+  .reveal.visible { opacity: 1; transform: none; }
+
+  @media (max-width: 768px) {
+    nav { padding: 16px 20px; }
+    .nav-links { display: none; }
+    .hero { padding: 100px 20px 60px; }
+    section { padding: 70px 20px; }
+    .steps { grid-template-columns: 1fr; }
+    .features-grid { grid-template-columns: 1fr; }
+    .feature-card.wide { grid-column: span 1; }
+    .form-wrapper { grid-template-columns: 1fr; gap: 40px; }
+    .demo-body { grid-template-columns: 1fr; }
+    .demo-sidebar { border-left: none; border-top: 1px solid var(--border); }
+    footer { flex-direction: column; gap: 12px; text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">Spac<span>i</span>fy</div>
+  <nav class="nav-right">
+    <ul class="nav-links">
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#features">Features</a></li>
+      <li><a href="#start">Get started</a></li>
+    </ul>
+    <button class="theme-btn" onclick="toggleTheme()" title="Toggle theme" id="themeBtn">☽</button>
+  </nav>
+</nav>
+
+<!-- HERO -->
+<div class="hero">
+  <div class="hero-grid"></div>
+  <div class="hero-tag">✦ AI-Powered Architecture</div>
+  <h1>Turn rough sketches into<br><em>living</em> 3D spaces</h1>
+  <p>Upload your floor plan, label your rooms, and watch Spacify build an interactive 3D model — powered by AI.</p>
+  <div class="hero-cta">
+    <a href="#start" class="btn-primary">Start your project</a>
+    <a href="#how" class="btn-secondary">See how it works</a>
+  </div>
+
+  <!-- DEMO WIDGET -->
+  <div class="hero-visual">
+    <div class="demo-topbar">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <span class="demo-label">spacify.in — project editor</span>
+    </div>
+    <div class="demo-body">
+      <div class="demo-canvas">
+        <!-- Simple floor plan SVG -->
+        <svg class="floor-plan" viewBox="0 0 380 280" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Outer walls -->
+          <rect x="20" y="20" width="340" height="240" rx="2" stroke="currentColor" stroke-width="2.5" fill="none" opacity="0.2"/>
+          <!-- Living room -->
+          <rect x="20" y="20" width="160" height="120" fill="currentColor" fill-opacity="0.03" stroke="currentColor" stroke-opacity="0.12" stroke-width="1"/>
+          <text x="100" y="82" text-anchor="middle" font-family="DM Sans" font-size="9" fill="currentColor" fill-opacity="0.4" letter-spacing="0.08em">LIVING ROOM</text>
+          <!-- Master Bedroom -->
+          <rect x="180" y="20" width="180" height="130" fill="currentColor" fill-opacity="0.03" stroke="currentColor" stroke-opacity="0.12" stroke-width="1"/>
+          <text x="270" y="82" text-anchor="middle" font-family="DM Sans" font-size="9" fill="currentColor" fill-opacity="0.4" letter-spacing="0.08em">MASTER BED</text>
+          <!-- Kitchen -->
+          <rect x="20" y="140" width="100" height="120" fill="currentColor" fill-opacity="0.05" stroke="currentColor" stroke-opacity="0.15" stroke-width="1"/>
+          <text x="70" y="202" text-anchor="middle" font-family="DM Sans" font-size="9" fill="currentColor" fill-opacity="0.4" letter-spacing="0.08em">KITCHEN</text>
+          <!-- Bedroom 2 -->
+          <rect x="120" y="140" width="120" height="120" fill="currentColor" fill-opacity="0.03" stroke="currentColor" stroke-opacity="0.12" stroke-width="1"/>
+          <text x="180" y="202" text-anchor="middle" font-family="DM Sans" font-size="9" fill="currentColor" fill-opacity="0.4" letter-spacing="0.08em">BEDROOM 2</text>
+          <!-- Bathroom -->
+          <rect x="240" y="150" width="120" height="55" fill="currentColor" fill-opacity="0.03" stroke="currentColor" stroke-opacity="0.12" stroke-width="1"/>
+          <text x="300" y="179" text-anchor="middle" font-family="DM Sans" font-size="9" fill="currentColor" fill-opacity="0.4" letter-spacing="0.08em">BATH</text>
+          <!-- Store -->
+          <rect x="240" y="205" width="120" height="55" fill="currentColor" fill-opacity="0.03" stroke="currentColor" stroke-opacity="0.12" stroke-width="1"/>
+          <text x="300" y="234" text-anchor="middle" font-family="DM Sans" font-size="9" fill="currentColor" fill-opacity="0.4" letter-spacing="0.08em">STORE</text>
+          <!-- Door markers -->
+          <path d="M180 110 Q200 110 200 130" stroke="#c8f0a0" stroke-width="1" stroke-dasharray="3 2" fill="none" opacity="0.5"/>
+          <path d="M70 140 Q70 155 85 155" stroke="#c8f0a0" stroke-width="1" stroke-dasharray="3 2" fill="none" opacity="0.5"/>
+        </svg>
+      </div>
+      <div class="demo-sidebar">
+        <div class="sidebar-section">
+          <h4>Rooms</h4>
+          <div>
+            <span class="room-tag active">MB</span>
+            <span class="room-tag active">B2</span>
+            <span class="room-tag active">Kitchen</span>
+            <span class="room-tag active">Bath</span>
+            <span class="room-tag">WIC</span>
+            <span class="room-tag">Pooja</span>
+            <span class="room-tag">Study</span>
+          </div>
+        </div>
+        <div class="sidebar-section">
+          <h4>Dimensions</h4>
+          <div class="input-row">
+            <label>Total area (sq ft)</label>
+            <input type="text" value="1,450" />
+          </div>
+          <div class="input-row">
+            <label>Floors</label>
+            <input type="text" value="1" />
+          </div>
+        </div>
+        <button class="generate-btn">Generate 3D Model →</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- HOW IT WORKS -->
+<section id="how">
+  <div class="reveal">
+    <div class="section-eyebrow">Process</div>
+    <h2 class="section-heading">Three steps to<br>your 3D home</h2>
+  </div>
+  <div class="steps reveal">
+    <div class="step">
+      <div class="step-num">01</div>
+      <h3>Sketch your plan</h3>
+      <p>Draw on paper or digitally. Follow our guided tutorial with example sketches to mark rooms — MB, B1, Kitchen, Pooja, and more.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">02</div>
+      <h3>Enter dimensions</h3>
+      <p>Input total area, length, width, and individual room sizes. Or upload a sketch and let AI read the measurements automatically.</p>
+    </div>
+    <div class="step">
+      <div class="step-num">03</div>
+      <h3>Explore in 3D</h3>
+      <p>Rotate, zoom, and flip your interactive model. Toggle between raw structure and fully furnished interiors with one click.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- FEATURES -->
+<section id="features">
+  <div class="reveal">
+    <div class="section-eyebrow">Features</div>
+    <h2 class="section-heading">Everything a designer<br>actually needs</h2>
+    <p class="section-sub">Built for Indian property designers and builders — from 1BHK to multi-storey villas.</p>
+  </div>
+  <div class="features-grid reveal">
+    <div class="feature-card">
+      <div class="feat-icon">⬜</div>
+      <h3>Interactive 3D model</h3>
+      <p>Rotate, flip, zoom your floor plan. Walk through every room with real spatial proportions.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feat-icon">◑</div>
+      <h3>Interior toggle</h3>
+      <p>Switch between bare walls and fully furnished vision — beds, cupboards, kitchen cabinets, and more.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feat-icon">◈</div>
+      <h3>Room labelling system</h3>
+      <p>Mark every space precisely: MB, B1, B2, WIC, Pooja, Study, Balcony, Store — with guided tutorial.</p>
+    </div>
+    <div class="feature-card">
+      <div class="feat-icon">⬡</div>
+      <h3>Multi-floor support</h3>
+      <p>Design G+1, G+2 buildings with staircase placement and floor-by-floor 3D views.</p>
+    </div>
+    <div class="feature-card wide">
+      <div class="feat-icon">✦</div>
+      <h3>AI design assistant</h3>
+      <p>Chat with Spacify's AI to get wall colour suggestions, kitchen layout ideas, false ceiling designs, tile vs marble recommendations — and auto-fill your 3D model with a single prompt.</p>
+    </div>
+  </div>
+</section>
+
+<hr class="divider">
+
+<!-- GET STARTED FORM -->
+<section id="start">
+  <div class="reveal">
+    <div class="section-eyebrow">Get started</div>
+    <h2 class="section-heading">Start your first<br>project today</h2>
+  </div>
+  <div class="form-wrapper reveal">
+    <div>
+      <div class="form-group">
+        <label>Your name</label>
+        <input type="text" placeholder="Rahul Sharma">
+      </div>
+      <div class="form-group">
+        <label>Email address</label>
+        <input type="email" placeholder="rahul@example.com">
+      </div>
+      <div class="form-group">
+        <label>Project type</label>
+        <select>
+          <option>Residential — apartment</option>
+          <option>Residential — independent house</option>
+          <option>Villa / bungalow</option>
+          <option>Commercial</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>Total area (sq ft)</label>
+        <input type="number" placeholder="1200">
+      </div>
+      <div class="form-group">
+        <label>Number of floors</label>
+        <input type="number" placeholder="1" min="1" max="10">
+      </div>
+      <div class="form-group">
+        <label>Rooms needed</label>
+        <div class="room-grid" id="roomGrid">
+          <span class="room-chip" onclick="toggleChip(this)">Master bedroom</span>
+          <span class="room-chip" onclick="toggleChip(this)">Bedroom 2</span>
+          <span class="room-chip" onclick="toggleChip(this)">Bedroom 3</span>
+          <span class="room-chip" onclick="toggleChip(this)">Kitchen</span>
+          <span class="room-chip" onclick="toggleChip(this)">Living room</span>
+          <span class="room-chip" onclick="toggleChip(this)">Bathroom</span>
+          <span class="room-chip" onclick="toggleChip(this)">Pooja room</span>
+          <span class="room-chip" onclick="toggleChip(this)">Study</span>
+          <span class="room-chip" onclick="toggleChip(this)">Walk-in closet</span>
+          <span class="room-chip" onclick="toggleChip(this)">Balcony</span>
+          <span class="room-chip" onclick="toggleChip(this)">Store room</span>
+        </div>
+      </div>
+      <div class="form-group">
+        <label>Any special requirements</label>
+        <textarea placeholder="Vastu-compliant layout, corner plot, open kitchen preference..."></textarea>
+      </div>
+      <button class="submit-btn" onclick="handleSubmit()">Create my project →</button>
+    </div>
+    <div class="form-info">
+      <h3>What happens next?</h3>
+      <p>Fill in your details and we'll set up your project workspace — ready for you to upload your sketch and generate a 3D model.</p>
+      <ul class="info-list">
+        <li>Upload a hand-drawn or digital floor plan sketch</li>
+        <li>Label rooms using our guided system</li>
+        <li>Generate your interactive 3D model instantly</li>
+        <li>Chat with AI to design interiors</li>
+        <li>Share a link with your client</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-logo">Spac<span>i</span>fy</div>
+  <p>Built for Indian architects & designers · 2025</p>
+</footer>
+
+<script>
+  // Theme toggle
+  function toggleTheme() {
+    const html = document.documentElement;
+    const btn = document.getElementById('themeBtn');
+    if (html.dataset.theme === 'dark') {
+      html.dataset.theme = 'light';
+      btn.textContent = '○';
+    } else {
+      html.dataset.theme = 'dark';
+      btn.textContent = '☽';
+    }
+  }
+
+  // Room chips
+  function toggleChip(el) {
+    el.classList.toggle('selected');
+  }
+
+  // Scroll reveal
+  const observer = new IntersectionObserver((entries) => {
+    entries.forEach(e => {
+      if (e.isIntersecting) { e.target.classList.add('visible'); }
+    });
+  }, { threshold: 0.1 });
+  document.querySelectorAll('.reveal').forEach(el => observer.observe(el));
+
+  // Submit
+  function handleSubmit() {
+    const btn = document.querySelector('.submit-btn');
+    const name = document.querySelector('input[placeholder="Rahul Sharma"]').value.trim();
+    const email = document.querySelector('input[type="email"]').value.trim();
+    if (!name || !email) {
+      btn.textContent = 'Please fill name & email';
+      btn.style.background = '#ff6b6b';
+      btn.style.color = '#fff';
+      setTimeout(() => { btn.textContent = 'Create my project →'; btn.style.background = ''; btn.style.color = ''; }, 2000);
+      return;
+    }
+    btn.textContent = 'Setting up your project...';
+    btn.style.background = '#c8f0a0';
+    btn.style.color = '#0a1a00';
+    setTimeout(() => { window.location.href = 'spacify-3d.html?new=1'; }, 1200);
+  }
+</script>
+</body>
+</html>
