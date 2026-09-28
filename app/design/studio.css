@@ -107,6 +107,7 @@
 .studio .upload-card h3 { font-family: var(--serif); font-weight: 400; font-size: 24px; color: var(--text); letter-spacing: -0.02em; }
 .studio .upload-card p { font-size: 13px; color: var(--text2); font-weight: 300; line-height: 1.65; max-width: 300px; }
 .studio .upload-card .hint { font-size: 11px; color: var(--text3); margin-top: -4px; }
+.studio .upload-actions .hint { font-size: 12px; color: var(--text3); }
 .studio .upload-btn { padding: 10px 24px; border-radius: 8px; background: var(--text); color: var(--bg); font-size: 13px; font-weight: 500; cursor: pointer; border: none; transition: opacity 0.2s; display: inline-block; }
 .studio .upload-btn:hover { opacity: 0.8; }
 .studio .upload-divider { display: flex; align-items: center; gap: 10px; width: 100%; color: var(--text3); font-size: 12px; }

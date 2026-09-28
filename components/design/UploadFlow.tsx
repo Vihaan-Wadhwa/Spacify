@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { compressImage } from "@/lib/browser";
 import type { Room } from "@/lib/rooms";
 
@@ -28,7 +28,8 @@ export function UploadFlow({ showEmptyState, inputRef, onAccept, onShowTutorial,
     if (!file) return;
     let image: Awaited<ReturnType<typeof compressImage>>;
     try {
-      image = await compressImage(file);
+      // 1024px keeps handwritten labels legible for the vision model while staying ~150 KB.
+      image = await compressImage(file, 1024, 0.8);
     } catch (err) {
       setState({ kind: "error", preview: null, message: (err as Error).message });
       return;
@@ -86,10 +87,7 @@ export function UploadFlow({ showEmptyState, inputRef, onAccept, onShowTutorial,
           {state.preview && <img src={state.preview} alt="Your uploaded sketch" />}
 
           {state.kind === "analysing" && (
-            <div className="upload-status">
-              <span className="spinner">◌</span>
-              <span>Analysing your sketch with AI...</span>
-            </div>
+            <AnalysingStatus />
           )}
 
           {state.kind === "found" && (
@@ -124,5 +122,23 @@ export function UploadFlow({ showEmptyState, inputRef, onAccept, onShowTutorial,
         </div>
       )}
     </>
+  );
+}
+
+/** Spinner with a seconds counter — a local model can take a minute, so show that it's still working. */
+function AnalysingStatus() {
+  const [seconds, setSeconds] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => setSeconds((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <div className="upload-actions">
+      <div className="upload-status">
+        <span className="spinner">◌</span>
+        <span>Analysing your sketch with AI... {seconds > 0 && `${seconds}s`}</span>
+      </div>
+      {seconds >= 10 && <p className="hint">A local model can take up to a minute or two, especially on the first upload while it loads.</p>}
+    </div>
   );
 }

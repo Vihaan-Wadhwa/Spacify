@@ -8,19 +8,38 @@ This is the Next.js (App Router, TypeScript) version of the original `spacify.ht
 
 ```bash
 npm install
-cp .env.example .env.local   # then fill in the webhook URLs
+cp .env.example .env.local
 npm run dev                   # http://localhost:3000
 ```
 
 - `/` — landing page
 - `/design` — the 3D builder (`/design?demo=1` opens with sample rooms)
 
-| Env var | Used by | Notes |
-|---|---|---|
-| `N8N_SKETCH_WEBHOOK_URL` | `/api/sketch` | n8n workflow that turns a sketch image into rooms JSON |
-| `N8N_CHAT_WEBHOOK_URL` | `/api/chat` | Optional. Without it the assistant uses built-in canned answers |
+### Sketch recognition with a local model (default)
 
-Both are read **on the server only**, so the browser never sees them and the old `corsproxy.io` hop is gone.
+Sketches are read by **Qwen2.5-VL** running on your own machine through [Ollama](https://ollama.com) — no API key, no per-request cost.
+
+```bash
+# 1. Install Ollama from https://ollama.com/download
+# 2. Download the vision model (~6 GB, once)
+ollama pull qwen2.5vl:7b
+# 3. Make sure Ollama is running (the desktop app does this, or:)
+ollama serve
+```
+
+Then upload a sketch at `/design`. The first upload is slowest while the model loads (it stays loaded for 10 minutes). Expect a few seconds per sketch on a GPU and up to a minute or two on CPU only. On a laptop without a GPU, `qwen2.5vl:3b` is faster (set `OLLAMA_VISION_MODEL`).
+
+If something's wrong, the upload screen tells you what: Ollama not running, model not downloaded, or no rooms found.
+
+| Env var | Default | Notes |
+|---|---|---|
+| `SKETCH_PROVIDER` | `ollama` | `ollama` (local) or `n8n` (hosted workflow) |
+| `OLLAMA_URL` | `http://localhost:11434` | |
+| `OLLAMA_VISION_MODEL` | `qwen2.5vl:7b` | any Ollama vision model |
+| `N8N_SKETCH_WEBHOOK_URL` | — | only used when `SKETCH_PROVIDER=n8n` |
+| `N8N_CHAT_WEBHOOK_URL` | — | AI assistant; without it, built-in canned answers |
+
+All of these are read on the server only. How it works: `lib/server/ollama.ts` sends the image with a prompt and a JSON schema (Ollama's structured output), so the model can only answer in the `{ rooms: [...] }` shape; `lib/server/sketch.ts` then validates and clamps every room with zod before it reaches the 3D builder.
 
 ## Project structure
 
@@ -32,7 +51,7 @@ app/
   design/page.tsx       design page → <DesignStudio />
   design/studio.css     design-page styles (scoped under .studio)
   api/
-    sketch/route.ts     sketch image → n8n → validated rooms (zod)
+    sketch/route.ts     sketch image → Qwen (Ollama) or n8n → validated rooms (zod)
     chat/route.ts       AI assistant (n8n or fallback answers)
     projects/…          501 stubs — Postgres (Task 3/4)
     rooms/route.ts      501 stub  — Postgres
@@ -57,7 +76,7 @@ lib/
   scene/SpacifyScene.ts the Three.js scene (orbit, picking, walkthrough, export)
   plan.ts               2D plan drawing
   browser.ts            image compression, downloads
-  server/               sketch parsing, chat prompt/fallbacks, HTTP helpers
+  server/               ollama.ts (local vision model), sketch parsing, chat prompt/fallbacks, HTTP helpers
 ```
 
 React owns the state; `SpacifyScene` only draws it. `DesignStudio` passes rooms, floors, layers, per-room designs and the selection down to `<ThreeCanvas />`, which pushes them into the scene.
@@ -76,4 +95,4 @@ React owns the state; `SpacifyScene` only draws it. `DesignStudio` passes rooms,
 
 ## Next (from the plan)
 
-Task 3.1–3.2 Postgres + Prisma → Task 4 auth and saved projects → Task 3.3–3.6 MongoDB + ChromaDB → Tasks 2 and 5 (sketch AI and RAG chat).
+Task 2 (sketch recognition) is done with a local Qwen model. Next: Task 3.1–3.2 Postgres + Prisma → Task 4 auth and saved projects → Task 3.3–3.6 MongoDB + ChromaDB → Task 5 RAG chat.
