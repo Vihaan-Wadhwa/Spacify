@@ -1,0 +1,207 @@
+/* Landing page styles — everything is scoped under .landing so it can't leak into /design. */
+.landing {
+  --radius: 12px;
+  --transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  min-height: 100vh;
+}
+[data-theme="light"] .landing { --bg: #f8f6f2; --text2: #777770; --text3: #bbbbaa; }
+
+/* NAV */
+.landing .nav {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 20px 40px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  transition: background var(--transition), border-color var(--transition);
+  backdrop-filter: blur(12px);
+}
+.landing .nav-logo { font-family: var(--serif); font-size: 22px; color: var(--text); letter-spacing: -0.02em; text-decoration: none; }
+.landing .nav-logo span, .landing .footer-logo span { color: var(--accent); }
+.landing .nav-right { display: flex; align-items: center; gap: 24px; }
+.landing .nav-links { display: flex; gap: 28px; list-style: none; }
+.landing .nav-links a { font-size: 13px; color: var(--text2); text-decoration: none; letter-spacing: 0.02em; transition: color var(--transition); }
+.landing .nav-links a:hover { color: var(--text); }
+.landing .theme-btn {
+  width: 36px; height: 36px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--bg3);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: all var(--transition); color: var(--text2); font-size: 15px;
+}
+.landing .theme-btn:hover { border-color: var(--text3); color: var(--text); }
+
+/* HERO */
+.landing .hero {
+  min-height: 100vh;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; padding: 120px 40px 80px;
+  position: relative; overflow: hidden;
+}
+.landing .hero-grid {
+  position: absolute; inset: 0;
+  background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 60px 60px;
+  mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 30%, transparent 80%);
+  -webkit-mask-image: radial-gradient(ellipse 80% 60% at 50% 50%, black 30%, transparent 80%);
+}
+.landing .hero-tag {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--accent); border: 1px solid rgba(200, 240, 160, 0.2);
+  padding: 5px 14px; border-radius: 20px; margin-bottom: 28px;
+  background: rgba(200, 240, 160, 0.05);
+  opacity: 0; animation: fadeUp 0.6s 0.2s forwards; position: relative;
+}
+.landing .hero h1 {
+  font-family: var(--serif); font-weight: 400;
+  font-size: clamp(42px, 7vw, 88px); line-height: 1.05; letter-spacing: -0.03em;
+  color: var(--text); max-width: 800px; margin-bottom: 24px;
+  opacity: 0; animation: fadeUp 0.6s 0.35s forwards; position: relative;
+}
+.landing .hero h1 em { font-style: italic; color: var(--text2); }
+.landing .hero > p {
+  font-size: 17px; font-weight: 300; color: var(--text2);
+  max-width: 440px; line-height: 1.7; margin-bottom: 44px;
+  opacity: 0; animation: fadeUp 0.6s 0.5s forwards; position: relative;
+}
+.landing .hero-cta { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; opacity: 0; animation: fadeUp 0.6s 0.65s forwards; position: relative; }
+.landing .btn-primary {
+  padding: 13px 28px; border-radius: var(--radius);
+  background: var(--text); color: var(--bg);
+  font-size: 14px; font-weight: 500; border: none; cursor: pointer;
+  transition: opacity var(--transition), transform var(--transition); text-decoration: none;
+}
+.landing .btn-primary:hover { opacity: 0.85; transform: translateY(-1px); }
+.landing .btn-secondary {
+  padding: 13px 28px; border-radius: var(--radius);
+  background: transparent; color: var(--text2);
+  font-size: 14px; border: 1px solid var(--border); cursor: pointer;
+  transition: all var(--transition); text-decoration: none;
+}
+.landing .btn-secondary:hover { color: var(--text); border-color: var(--text3); }
+
+/* DEMO CARD */
+.landing .hero-visual {
+  margin-top: 72px; width: 100%; max-width: 780px;
+  border: 1px solid var(--border); border-radius: 20px;
+  background: var(--bg2); overflow: hidden;
+  opacity: 0; animation: fadeUp 0.8s 0.8s forwards; position: relative; text-align: left;
+}
+.landing .demo-topbar { display: flex; align-items: center; gap: 8px; padding: 14px 20px; border-bottom: 1px solid var(--border); background: var(--bg3); }
+.landing .dot { width: 10px; height: 10px; border-radius: 50%; }
+.landing .dot.r { background: #ff5f57; }
+.landing .dot.y { background: #febc2e; }
+.landing .dot.g { background: #28c840; }
+.landing .demo-label { font-size: 12px; color: var(--text3); margin-left: 8px; letter-spacing: 0.05em; }
+.landing .demo-body { display: grid; grid-template-columns: 1fr 240px; min-height: 340px; }
+.landing .demo-canvas { padding: 28px; display: flex; align-items: center; justify-content: center; background: var(--bg); color: var(--text); }
+.landing .floor-plan { width: 100%; max-width: 380px; }
+.landing .demo-sidebar { border-left: 1px solid var(--border); padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+.landing .sidebar-section h4 { font-size: 10px; font-weight: 500; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text3); margin-bottom: 10px; }
+.landing .room-tag {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11px; padding: 4px 9px; border-radius: 6px; margin: 2px;
+  border: 1px solid var(--border); color: var(--text2); background: var(--bg3); transition: all 0.2s;
+}
+.landing .room-tag:hover { color: var(--text); border-color: var(--text3); }
+.landing .room-tag.active { background: rgba(200, 240, 160, 0.1); color: var(--accent); border-color: rgba(200, 240, 160, 0.3); }
+.landing .input-row { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+.landing .input-row label { font-size: 10px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.08em; }
+.landing .input-row input {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 7px; padding: 7px 10px;
+  font-size: 12px; color: var(--text); outline: none; transition: border-color 0.2s;
+}
+.landing .input-row input:focus { border-color: var(--text3); }
+.landing .generate-btn {
+  margin-top: auto; width: 100%; padding: 10px; border-radius: 8px;
+  background: var(--accent); color: var(--accent-dark);
+  font-size: 12px; font-weight: 500; border: none; cursor: pointer; transition: opacity 0.2s;
+  text-align: center; text-decoration: none;
+}
+.landing .generate-btn:hover { opacity: 0.85; }
+
+/* SECTIONS */
+.landing section { padding: 100px 40px; max-width: 1100px; margin: 0 auto; }
+.landing .section-eyebrow { font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent); margin-bottom: 16px; }
+.landing .section-heading { font-family: var(--serif); font-weight: 400; font-size: clamp(32px, 4vw, 52px); letter-spacing: -0.02em; line-height: 1.1; color: var(--text); margin-bottom: 16px; }
+.landing .section-sub { font-size: 16px; font-weight: 300; color: var(--text2); max-width: 500px; line-height: 1.7; }
+
+/* HOW IT WORKS */
+.landing .steps {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px;
+  background: var(--border); border: 1px solid var(--border); border-radius: 16px;
+  overflow: hidden; margin-top: 60px;
+}
+.landing .step { background: var(--bg2); padding: 36px 32px; transition: background var(--transition); }
+.landing .step:hover { background: var(--bg3); }
+.landing .step-num { font-family: var(--serif); font-size: 42px; color: var(--text3); line-height: 1; margin-bottom: 20px; }
+.landing .step h3 { font-size: 16px; font-weight: 500; color: var(--text); margin-bottom: 8px; }
+.landing .step p { font-size: 14px; color: var(--text2); font-weight: 300; line-height: 1.65; }
+
+/* FEATURES */
+.landing .features-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; margin-top: 60px; }
+.landing .feature-card {
+  border: 1px solid var(--border); border-radius: var(--radius); padding: 28px; background: var(--bg2);
+  transition: border-color var(--transition), background var(--transition);
+}
+.landing .feature-card:hover { border-color: var(--text3); background: var(--bg3); }
+.landing .feature-card.wide { grid-column: span 2; }
+.landing .feat-icon { font-size: 22px; margin-bottom: 14px; }
+.landing .feature-card h3 { font-size: 15px; font-weight: 500; color: var(--text); margin-bottom: 6px; }
+.landing .feature-card p { font-size: 13px; color: var(--text2); font-weight: 300; line-height: 1.65; }
+
+/* START FORM */
+.landing .form-wrapper { display: grid; grid-template-columns: 1fr 1fr; gap: 60px; align-items: start; margin-top: 60px; }
+.landing .form-group { display: flex; flex-direction: column; gap: 6px; margin-bottom: 18px; }
+.landing .form-group label { font-size: 12px; font-weight: 500; color: var(--text2); letter-spacing: 0.04em; }
+.landing .form-group input, .landing .form-group select, .landing .form-group textarea {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px;
+  font-size: 14px; color: var(--text); outline: none; transition: border-color 0.2s; width: 100%;
+}
+.landing .form-group input:focus, .landing .form-group select:focus, .landing .form-group textarea:focus { border-color: rgba(200, 240, 160, 0.4); }
+.landing .form-group select option { background: var(--bg2); }
+.landing .form-group textarea { resize: vertical; min-height: 80px; }
+.landing .room-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.landing .room-chip {
+  padding: 6px 12px; border-radius: 20px; border: 1px solid var(--border);
+  font-size: 12px; color: var(--text2); cursor: pointer; transition: all 0.2s; background: var(--bg2); user-select: none;
+}
+.landing .room-chip.selected { background: rgba(200, 240, 160, 0.1); color: var(--accent); border-color: rgba(200, 240, 160, 0.35); }
+.landing .submit-btn {
+  width: 100%; padding: 14px; border-radius: 10px;
+  background: var(--text); color: var(--bg);
+  font-size: 14px; font-weight: 500; border: none; cursor: pointer; margin-top: 8px;
+  transition: opacity 0.2s, transform 0.2s, background 0.2s;
+}
+.landing .submit-btn:hover { opacity: 0.85; transform: translateY(-1px); }
+.landing .submit-btn.error { background: #ff6b6b; color: #fff; }
+.landing .submit-btn.loading { background: #c8f0a0; color: #0a1a00; }
+.landing .form-info h3 { font-family: var(--serif); font-weight: 400; font-size: 28px; color: var(--text); margin-bottom: 12px; letter-spacing: -0.02em; }
+.landing .form-info p { font-size: 14px; color: var(--text2); font-weight: 300; line-height: 1.7; margin-bottom: 24px; }
+.landing .info-list { list-style: none; display: flex; flex-direction: column; gap: 12px; }
+.landing .info-list li { display: flex; align-items: flex-start; gap: 10px; font-size: 14px; color: var(--text2); }
+.landing .info-list li::before { content: "→"; color: var(--accent); flex-shrink: 0; }
+
+/* FOOTER */
+.landing footer { border-top: 1px solid var(--border); padding: 32px 40px; display: flex; align-items: center; justify-content: space-between; }
+.landing .footer-logo { font-family: var(--serif); font-size: 18px; color: var(--text); }
+.landing footer p { font-size: 12px; color: var(--text3); }
+.landing .divider { border: none; border-top: 1px solid var(--border); }
+
+/* SCROLL REVEAL */
+.landing .reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.6s, transform 0.6s; }
+.landing .reveal.visible { opacity: 1; transform: none; }
+
+@media (max-width: 768px) {
+  .landing .nav { padding: 16px 20px; }
+  .landing .nav-links { display: none; }
+  .landing .hero { padding: 100px 20px 60px; }
+  .landing section { padding: 70px 20px; }
+  .landing .steps { grid-template-columns: 1fr; }
+  .landing .features-grid { grid-template-columns: 1fr; }
+  .landing .feature-card.wide { grid-column: span 1; }
+  .landing .form-wrapper { grid-template-columns: 1fr; gap: 40px; }
+  .landing .demo-body { grid-template-columns: 1fr; }
+  .landing .demo-sidebar { border-left: none; border-top: 1px solid var(--border); }
+  .landing footer { flex-direction: column; gap: 12px; text-align: center; }
+}
