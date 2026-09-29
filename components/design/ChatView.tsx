@@ -19,9 +19,11 @@ type Props = {
   visible: boolean;
   /** Plain-English summary of the current rooms, sent along so replies fit the project. */
   projectContext: string;
+  /** Saved project id; when set, answers are logged to the ai_suggestions table. */
+  projectId: number | null;
 };
 
-export function ChatView({ visible, projectContext }: Props) {
+export function ChatView({ visible, projectContext, projectId }: Props) {
   const [messages, setMessages] = useState<Message[]>([{ id: 0, role: "assistant", content: GREETING }]);
   const [input, setInput] = useState("");
   const [waiting, setWaiting] = useState(false);
@@ -48,7 +50,7 @@ export function ChatView({ visible, projectContext }: Props) {
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, history, projectContext }),
+        body: JSON.stringify({ message, history, projectContext, projectId: projectId ?? undefined }),
       });
       const data = (await res.json()) as { reply?: string; source?: string; error?: string };
       reply = data.reply ?? data.error ?? "Something went wrong. Please try again.";

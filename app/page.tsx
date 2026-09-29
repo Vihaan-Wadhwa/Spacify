@@ -44,6 +44,7 @@ export default function LandingPage() {
             <li><a href="#how">How it works</a></li>
             <li><a href="#features">Features</a></li>
             <li><a href="#start">Get started</a></li>
+            <li><Link href="/projects">My projects</Link></li>
           </ul>
           <ThemeToggleButton className="theme-btn" />
         </div>

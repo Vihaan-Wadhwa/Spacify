@@ -1,0 +1,20 @@
+# Local PostgreSQL for Spacify.  Start: docker compose up -d   Stop: docker compose down
+# Matches the default DATABASE_URL in .env.example. Data survives restarts (the named volume).
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: spacify
+      POSTGRES_PASSWORD: spacify
+      POSTGRES_DB: spacify
+    ports:
+      - "5432:5432"
+    volumes:
+      - spacify-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U spacify"]
+      interval: 5s
+      retries: 10
+
+volumes:
+  spacify-pgdata:

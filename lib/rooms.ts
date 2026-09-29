@@ -101,7 +101,7 @@ export type LayoutBox = { id: number; x: number; z: number; w: number; l: number
 /**
  * Row-based auto layout: packs rooms left-to-right, wraps when a row gets too wide,
  * then centres the result on the origin. Units are whatever `scale` turns feet into.
- * (Rooms have no stored position yet — this is what the floor-plan editor will replace.)
+ * The server uses the same packing (in feet) to store each room's position_x / position_z on save.
  */
 export function layoutRooms(rooms: Room[], opts: { scale: number; gap: number; maxRowWidth: number; center: boolean }): LayoutBox[] {
   const boxes: LayoutBox[] = [];
