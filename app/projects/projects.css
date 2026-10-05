@@ -4,6 +4,7 @@
 .projects-page .pp-nav { display: flex; align-items: center; justify-content: space-between; padding: 16px 40px; border-bottom: 1px solid var(--border); background: var(--bg2); }
 .projects-page .pp-logo { font-family: var(--serif); font-size: 20px; color: var(--text); text-decoration: none; }
 .projects-page .pp-logo span { color: var(--accent); }
+.projects-page .pp-nav-right { display: flex; align-items: center; gap: 10px; }
 .projects-page .pp-theme { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border); background: var(--bg3); color: var(--text2); cursor: pointer; }
 
 .projects-page .pp-main { max-width: 1100px; margin: 0 auto; padding: 48px 40px 80px; }

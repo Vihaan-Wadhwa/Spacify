@@ -56,7 +56,7 @@ try {
     console.log("• Created 9 tables, 3 triggers, project_access() and project_summary");
     if (seed) {
       await client.query(await sql("seed.sql"));
-      console.log("• Added sample data (log-in for later: demo@spacify.in / spacify123)");
+      console.log("• Added sample data (log in as demo@spacify.in / spacify123 or rahul@example.com / rahul123)");
     }
     await client.query("COMMIT");
     console.log("✓ Database ready");

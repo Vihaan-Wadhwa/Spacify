@@ -14,12 +14,20 @@ npm run db:setup              # create the tables and sample data
 npm run dev                   # http://localhost:3000
 ```
 
-- `/` — landing page
-- `/projects` — your saved projects (and ones shared with you)
-- `/design` — the 3D builder; **Save** (or Ctrl+S) stores the project, and the URL becomes `/design?project=<id>`
-- `/design?demo=1` — sample rooms, not saved
+Then log in with a test account (from `db/seed.sql`) or create your own at `/register`:
 
-The app works without a database too: you just can't save, and the projects page says why.
+| Email | Password | Sees |
+|---|---|---|
+| `demo@spacify.in` | `spacify123` | Sample 2BHK, plus Rahul's Villa under "Shared with me" (edit access) |
+| `rahul@example.com` | `rahul123` | Rahul's Villa |
+
+- `/` — landing page
+- `/login`, `/register` — accounts
+- `/projects` — your saved projects (and ones shared with you); needs a login
+- `/design` — the 3D builder; **Save** (or Ctrl+S) stores the project, and the URL becomes `/design?project=<id>`; needs a login
+- `/design?demo=1` — sample rooms, open to everyone; saving asks you to log in
+
+Without a database, the landing page and the demo still work; logging in and saving don't.
 
 ## Database (PostgreSQL)
 
@@ -29,7 +37,7 @@ The schema is plain SQL so every table, constraint and trigger is visible:
 |---|---|
 | `db/schema.sql` | The 8 tables from the DBMS report plus `openings` (doors and windows), with CHECK/UNIQUE/FK constraints, FK indexes, 3 triggers, the `project_access()` function and the `project_summary` view |
 | `db/seed.sql` | Two users, two projects, one shared between them, plus furniture, exports and AI suggestions |
-| `db/queries.sql` | 10 example queries for the report (joins, GROUP BY/HAVING, correlated subquery, LEFT JOIN, view, function, a trigger demo) |
+| `db/queries.sql` | 13 example queries for the report (joins, GROUP BY/HAVING, correlated subquery, LEFT JOIN, view, function, a trigger demo, sessions) |
 | `db/reset.sql` | Drops everything (used by `npm run db:reset`) |
 | `db/upgrade.sql` | Adds `openings` to a database created before the plan editor (`npm run db:setup` runs it when needed) |
 
@@ -50,14 +58,31 @@ Then `npm run db:setup` (safe to re-run; it won't touch existing data, and it br
 - **Access control** runs in SQL: every read or write calls `project_access(user, project)`, which returns `owner`, `edit`, `view` or nothing, using `shared_projects`. A view-only project opens with Save disabled.
 - **Exports** (2D or 3D PNG) of a saved project add a row to `exports`. **AI assistant answers** for a saved project go into `ai_suggestions` (only answers from the real chat workflow, not the built-in canned ones).
 - **Wall colours and flooring aren't saved yet.** They go to MongoDB in Task 3.3.
-- **There's no login yet (Task 4).** Everyone acts as the seeded `demo@spacify.in` account (`DEMO_USER_EMAIL`). All of this goes through `getCurrentUserId()` in `lib/server/currentUser.ts`, which is the only thing Task 4 needs to change.
+- **Who you are** comes from your session (see below). Every page and API route asks `lib/server/currentUser.ts`, and new projects belong to whoever saves them.
+
+**Accounts and sessions**
+
+Login is our own, using the `users` and `sessions` tables (no auth library), so all the SQL is visible in `lib/server/auth.ts` and `lib/server/currentUser.ts`.
+
+- **Register** checks the input with zod (name 1–100 characters, a valid email, password 8–72 characters, matching confirmation), hashes the password with bcrypt (cost 10) and, in one transaction, inserts the user and a session. The email is stored lowercased; the `UNIQUE` constraint turns a taken email into a 409.
+- **Log in** looks the user up by email and compares the password with bcrypt. An unknown email is still compared against a dummy hash, so the response time doesn't reveal which emails have accounts, and both cases say "Email or password is incorrect." Logging in also deletes that user's expired sessions.
+- **The session cookie** `spacify_session` holds a random 32-byte token. It's `httpOnly` (JavaScript can't read it), `sameSite=lax` (not sent on cross-site form posts, so other sites can't log you out or act as you), `secure` in production, and expires with its session.
+- **Every request** hashes the cookie's token and looks it up: `SELECT … FROM sessions s JOIN users u … WHERE s.token = $1 AND s.expires_at > now()`. A missing, forged or expired cookie finds nothing and counts as logged out: API routes answer 401 `{ "error": "Please log in." }` and pages redirect to `/login?next=<page>`, which brings you back afterwards (only to paths on this site).
+- **`proxy.ts`** only checks that the cookie exists before `/projects` and `/design` (except `/design?demo=1`), to redirect early. The real check is always the database lookup above.
+- **Log out** is a form `POST /api/auth/logout`: it deletes the session row and clears the cookie.
+
+*Sessions, for the DBMS report.* `sessions.token` stores the **SHA-256 hash** (64 hex characters) of the token, never the token itself. The token is random, so a plain hash is enough (unlike passwords, it can't be guessed), and anyone who reads the table, from a backup or a leaked dump, can't turn a row back into a working cookie. Each session lasts 30 days: `expires_at = now() + 30 days` on insert, and `CHECK (expires_at > created_at)` keeps that consistent. Expiry is enforced in the lookup (`expires_at > now()`), not by the cookie, so an expired row stops working even if the browser still sends it. Expired rows are deleted when that user next logs in (or in bulk with Q13 in `db/queries.sql`). Deleting a user removes their sessions (`ON DELETE CASCADE`), and one user can have several sessions (one per browser/device).
 
 **API**
 
 | Method | Route | Needs | Does |
 |---|---|---|---|
-| GET | `/api/projects` | — | Projects you own or that are shared with you |
-| POST | `/api/projects` | — | Create a project with its rooms |
+| POST | `/api/auth/register` | — | `{ name, email, password, confirmPassword }` → creates the account, logs in |
+| POST | `/api/auth/login` | — | `{ email, password }` → sets the session cookie |
+| POST | `/api/auth/logout` | — | Ends the session, redirects to `/` |
+| GET | `/api/auth/me` | login | The logged-in user `{ id, name, email }` |
+| GET | `/api/projects` | login | Projects you own or that are shared with you |
+| POST | `/api/projects` | login | Create a project (owned by you) with its rooms |
 | GET | `/api/projects/:id` | view | The project and its rooms |
 | PUT | `/api/projects/:id` | edit | Save name, floors and rooms |
 | DELETE | `/api/projects/:id` | owner | Delete it (rooms, furniture, exports, suggestions, shares cascade) |
@@ -83,7 +108,6 @@ If something's wrong, the upload screen tells you what: Ollama not running, mode
 | Env var | Default | Notes |
 |---|---|---|
 | `DATABASE_URL` | — | PostgreSQL connection string |
-| `DEMO_USER_EMAIL` | `demo@spacify.in` | Who the app acts as until login exists |
 | `SKETCH_PROVIDER` | `ollama` | `ollama` (local) or `n8n` (hosted workflow) |
 | `OLLAMA_URL` | `http://localhost:11434` | |
 | `OLLAMA_VISION_MODEL` | `qwen2.5vl:7b` | any Ollama vision model |
@@ -102,9 +126,12 @@ app/
   design/page.tsx       design page; loads ?project=<id> from Postgres on the server
   design/studio.css     design-page styles (scoped under .studio)
   projects/page.tsx     "My projects" list (+ projects.css)
+  login/, register/     account pages
+proxy.ts                sends visitors without a session cookie to /login
   api/
     sketch/route.ts     sketch image → Qwen (Ollama) or n8n → validated rooms (zod)
     chat/route.ts       AI assistant (n8n or fallback answers); logs to ai_suggestions
+    auth/…              register, login, logout, me — users + sessions
     projects/…          list, create, load, save, delete, log exports — Postgres
     rooms/route.ts      list / add single rooms — Postgres
     design/route.ts     501 stub  — MongoDB (Task 3.3)
@@ -112,7 +139,8 @@ app/
 db/                     schema.sql, seed.sql, queries.sql, reset.sql
 scripts/db-setup.mjs    npm run db:setup / db:reset
 components/
-  ThemeProvider.tsx, ThemeToggleButton.tsx
+  ThemeProvider.tsx, ThemeToggleButton.tsx, UserMenu.tsx (name → My projects / Log out)
+  auth/                 AuthPage (frame), AuthForm (login + register form)
   landing/              Reveal (scroll fade-in), StartForm
   projects/ProjectCard  one saved project, with delete
   design/
@@ -129,13 +157,15 @@ components/
 lib/
   rooms.ts              Room and opening types, colours, defaults, walls, placement
   projects.ts           project types + zod validation shared by browser and API
+  auth.ts               account validation (zod), safe ?next= redirects, cookie name
   scene/SpacifyScene.ts the Three.js scene (orbit, picking, walkthrough, export)
   plan.ts               2D plan drawing, hit testing and snapping
   browser.ts            image compression, downloads
   server/
     db.ts               pg connection pool, query(), withTransaction()
     projects.ts         all project/room SQL, with access checks
-    currentUser.ts      who's signed in (demo user until Task 4)
+    auth.ts             register, login, logout: bcrypt + sessions SQL
+    currentUser.ts      who's signed in: getCurrentUser(), getCurrentUserId(), requireUser()
     errors.ts           turns DB/validation errors into clear messages
     ollama.ts, sketch.ts, chat.ts, http.ts
 ```
@@ -164,6 +194,6 @@ React owns the state; `SpacifyScene` only draws it. `DesignStudio` passes rooms,
 
 ## Next (from the plan)
 
-Done: Task 1 (Next.js), Task 2 (sketch recognition with local Qwen), Task 3.1–3.2 (PostgreSQL, using plain SQL + `pg` rather than Prisma so the SQL stays visible), and Task 4.4–4.5 (save and load projects).
+Done: Task 1 (Next.js), Task 2 (sketch recognition with local Qwen), Task 3.1–3.2 (PostgreSQL, using plain SQL + `pg` rather than Prisma so the SQL stays visible), Task 4.1–4.3 (register, log in, log out, with our own sessions) and Task 4.4–4.5 (save and load projects).
 
-Next: Task 4.1–4.3 login and register (fills in `sessions`, replaces the demo user) → Task 3.3 MongoDB for wall colours and flooring → Task 3.4 ChromaDB → Task 5 RAG chat.
+Next: Task 3.3 MongoDB for wall colours and flooring → Task 3.4 ChromaDB → Task 5 RAG chat.

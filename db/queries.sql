@@ -67,3 +67,22 @@ UPDATE rooms SET width = width + 2
  WHERE room_type = 'Living Room' AND project_id = (SELECT id FROM projects WHERE name = 'Sample 2BHK');
 SELECT name, total_area, updated_at FROM projects WHERE name = 'Sample 2BHK';
 ROLLBACK;
+
+-- Q11. Active sessions per user (LEFT JOIN + FILTER, so users with none show 0).
+--      sessions.token is a SHA-256 hash of the cookie's token; the raw token is never stored.
+SELECT u.email,
+       COUNT(s.id) FILTER (WHERE s.expires_at > now()) AS active_sessions,
+       MAX(s.created_at)                               AS last_login
+  FROM users u
+  LEFT JOIN sessions s ON s.user_id = u.id
+ GROUP BY u.id
+ ORDER BY u.id;
+
+-- Q12. What the app runs on every request to find out who is logged in ($1 = sha256 of the cookie).
+--      Shown here with a hash that matches nothing, so it returns no rows.
+SELECT u.id, u.name, u.email
+  FROM sessions s JOIN users u ON u.id = s.user_id
+ WHERE s.token = encode(sha256('not-a-real-token'::bytea), 'hex') AND s.expires_at > now();
+
+-- Q13. Housekeeping: delete expired sessions (the app also does this per user on each login).
+DELETE FROM sessions WHERE expires_at <= now() RETURNING user_id, expires_at;

@@ -19,7 +19,8 @@ const ROOM_OPTIONS = [
 
 type SubmitState = "idle" | "error" | "loading";
 
-export function StartForm() {
+/** Logged out: goes to /register with the name and email filled in. Logged in: straight to a new design. */
+export function StartForm({ loggedIn }: { loggedIn: boolean }) {
   const router = useRouter();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -36,14 +37,18 @@ export function StartForm() {
   }
 
   function handleSubmit() {
+    if (loggedIn) {
+      setState("loading");
+      router.push("/design");
+      return;
+    }
     if (!name.trim() || !email.trim()) {
       setState("error");
       setTimeout(() => setState("idle"), 2000);
       return;
     }
-    // TODO (Task 4): create the user/project via /api/projects before redirecting.
     setState("loading");
-    setTimeout(() => router.push("/design?new=1"), 1200);
+    router.push(`/register?${new URLSearchParams({ name: name.trim(), email: email.trim() })}`);
   }
 
   const label =

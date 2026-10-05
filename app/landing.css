@@ -22,6 +22,8 @@
 .landing .nav-links { display: flex; gap: 28px; list-style: none; }
 .landing .nav-links a { font-size: 13px; color: var(--text2); text-decoration: none; letter-spacing: 0.02em; transition: color var(--transition); }
 .landing .nav-links a:hover { color: var(--text); }
+.landing .nav-auth { padding: 7px 16px; border-radius: 20px; border: 1px solid var(--border2); font-size: 13px; color: var(--text); text-decoration: none; white-space: nowrap; transition: border-color var(--transition), background var(--transition); }
+.landing .nav-auth:hover { border-color: var(--accent); background: var(--bg2); }
 .landing .theme-btn {
   width: 36px; height: 36px; border-radius: 50%;
   border: 1px solid var(--border); background: var(--bg3);
@@ -195,6 +197,7 @@
 @media (max-width: 768px) {
   .landing .nav { padding: 16px 20px; }
   .landing .nav-links { display: none; }
+  .landing .nav-right { gap: 12px; }
   .landing .hero { padding: 100px 20px 60px; }
   .landing section { padding: 70px 20px; }
   .landing .steps { grid-template-columns: 1fr; }

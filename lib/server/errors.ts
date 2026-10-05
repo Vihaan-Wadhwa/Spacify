@@ -35,8 +35,16 @@ export function describeError(err: unknown, context: string): { status: number; 
   return { status: 500, message: "Something went wrong on the server." };
 }
 
-/** Turns anything thrown inside a route handler into a JSON error response. */
+/**
+ * Turns anything thrown inside a route handler into a JSON error response.
+ * Validation errors also carry `fields`: the first message for each invalid field, for forms to show inline.
+ */
 export function errorResponse(err: unknown, context: string) {
   const { status, message } = describeError(err, context);
+  if (err instanceof ZodError) {
+    const fields: Record<string, string> = {};
+    for (const issue of err.issues) fields[String(issue.path[0] ?? "")] ??= issue.message;
+    return NextResponse.json({ error: message, fields }, { status });
+  }
   return NextResponse.json({ error: message }, { status });
 }

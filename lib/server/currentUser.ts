@@ -1,23 +1,38 @@
 import "server-only";
-import { connection } from "next/server";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { cache } from "react";
+import { SESSION_COOKIE, loginPath, type CurrentUser } from "@/lib/auth";
+import { hashToken } from "./auth";
 import { query } from "./db";
 import { HttpError } from "./errors";
 
 /**
- * The signed-in user's id.
- *
- * Login doesn't exist yet (Task 4), so for now everyone acts as the seeded demo account
- * (DEMO_USER_EMAIL, default demo@spacify.in). Task 4 replaces this body with a lookup of the
- * session cookie in the `sessions` table — every caller already goes through this function.
+ * The signed-in user, or null: looks up the hash of the session cookie's token in `sessions`.
+ * A missing, forged or expired cookie all come out as null. Cached for the rest of the request.
  */
+export const getCurrentUser = cache(async (): Promise<CurrentUser | null> => {
+  const token = (await cookies()).get(SESSION_COOKIE)?.value;
+  if (!token) return null;
+  const rows = await query<CurrentUser>(
+    `SELECT u.id, u.name, u.email
+       FROM sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.token = $1 AND s.expires_at > now()`,
+    [hashToken(token)]
+  );
+  return rows[0] ?? null;
+});
+
+/** The signed-in user's id, for API routes and server code. Throws a 401 if there's no valid session. */
 export async function getCurrentUserId(): Promise<number> {
-  // Who the user is depends on the request, so anything that calls this must render per request,
-  // never at build time. (Task 4's cookie lookup makes this implicit; until then, say so explicitly.)
-  await connection();
-  const email = (process.env.DEMO_USER_EMAIL || "demo@spacify.in").toLowerCase();
-  const rows = await query<{ id: number }>("SELECT id FROM users WHERE email = $1", [email]);
-  if (!rows.length) {
-    throw new HttpError(503, `No user ${email} in the database. Run: npm run db:setup (it adds the demo account).`);
-  }
-  return rows[0].id;
+  const user = await getCurrentUser();
+  if (!user) throw new HttpError(401, "Please log in.");
+  return user.id;
+}
+
+/** For pages: the signed-in user, or a redirect to the login page that comes back to `currentPath` afterwards. */
+export async function requireUser(currentPath: string): Promise<CurrentUser> {
+  const user = await getCurrentUser();
+  if (!user) redirect(loginPath(currentPath));
+  return user;
 }

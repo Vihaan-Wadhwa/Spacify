@@ -3,9 +3,9 @@
 --  Two users, a project each, one project shared between them (M:N),
 --  plus furniture, exports and AI suggestions so every table has rows.
 --
---  Log-ins (for Task 4):  demo@spacify.in / spacify123
---                         rahul@example.com / rahul123
---  Until login exists, the app acts as demo@spacify.in.
+--  Test log-ins:  demo@spacify.in / spacify123
+--                 rahul@example.com / rahul123
+--  (No sessions are seeded: logging in creates them.)
 -- ════════════════════════════════════════════════════════════════════
 
 INSERT INTO users (name, email, password) VALUES

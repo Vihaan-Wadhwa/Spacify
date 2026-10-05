@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { ThemeToggleButton } from "@/components/ThemeToggleButton";
+import { UserMenu } from "@/components/UserMenu";
+import { loginPath, type CurrentUser } from "@/lib/auth";
 import type { StudioTab } from "@/lib/rooms";
 
 const TABS: { id: StudioTab; label: string }[] = [
@@ -20,6 +22,8 @@ const SAVE_LABELS: Record<SaveState, string> = {
 };
 
 type Props = {
+  /** null in the demo when nobody is logged in: Save becomes a link to the login page. */
+  user: CurrentUser | null;
   tab: StudioTab;
   onTab: (tab: StudioTab) => void;
   walking: boolean;
@@ -64,15 +68,22 @@ export function Topbar(p: Props) {
           readOnly={p.saveState === "readonly"}
           onChange={(e) => p.onProjectName(e.target.value)}
         />
-        <button
-          className={`save-btn ${p.saveState}`}
-          onClick={p.onSave}
-          disabled={!canSave}
-          title={canSave ? "Save to database (Ctrl+S)" : undefined}
-        >
-          {canSave && <span className="save-dot" aria-hidden />}
-          {SAVE_LABELS[p.saveState]}
-        </button>
+        {p.user ? (
+          <>
+            <button
+              className={`save-btn ${p.saveState}`}
+              onClick={p.onSave}
+              disabled={!canSave}
+              title={canSave ? "Save to database (Ctrl+S)" : undefined}
+            >
+              {canSave && <span className="save-dot" aria-hidden />}
+              {SAVE_LABELS[p.saveState]}
+            </button>
+            <UserMenu user={p.user} />
+          </>
+        ) : (
+          <Link href={loginPath("/design?demo=1")} className="save-btn unsaved">Log in to save</Link>
+        )}
       </div>
     </header>
   );

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Reveal } from "@/components/landing/Reveal";
 import { StartForm } from "@/components/landing/StartForm";
 import { ThemeToggleButton } from "@/components/ThemeToggleButton";
+import { getCurrentUser } from "@/lib/server/currentUser";
 import "./landing.css";
 
 const DEMO_ROOMS: { x: number; y: number; w: number; h: number; label: string; tx: number; ty: number; fill?: number }[] = [
@@ -32,7 +33,9 @@ const FEATURES = [
   },
 ];
 
-export default function LandingPage() {
+export default async function LandingPage() {
+  // The landing page works without a database; then it just treats you as logged out.
+  const user = await getCurrentUser().catch(() => null);
   return (
     <div className="landing">
       <nav className="nav">
@@ -44,8 +47,12 @@ export default function LandingPage() {
             <li><a href="#how">How it works</a></li>
             <li><a href="#features">Features</a></li>
             <li><a href="#start">Get started</a></li>
-            <li><Link href="/projects">My projects</Link></li>
           </ul>
+          {user ? (
+            <Link href="/projects" className="nav-auth">My projects</Link>
+          ) : (
+            <Link href="/login" className="nav-auth">Log in</Link>
+          )}
           <ThemeToggleButton className="theme-btn" />
         </div>
       </nav>
@@ -153,7 +160,7 @@ export default function LandingPage() {
           <h2 className="section-heading">Start your first<br />project today</h2>
         </Reveal>
         <Reveal className="form-wrapper">
-          <StartForm />
+          <StartForm loggedIn={user !== null} />
           <div className="form-info">
             <h3>What happens next?</h3>
             <p>Fill in your details and we&apos;ll set up your project workspace — ready for you to upload your sketch and generate a 3D model.</p>

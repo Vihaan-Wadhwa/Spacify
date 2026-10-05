@@ -1,10 +1,13 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { unstable_rethrow } from "next/navigation";
 import { connection } from "next/server";
 import { ProjectCard } from "@/components/projects/ProjectCard";
 import { ThemeToggleButton } from "@/components/ThemeToggleButton";
+import { UserMenu } from "@/components/UserMenu";
+import type { CurrentUser } from "@/lib/auth";
 import type { ProjectListItem } from "@/lib/projects";
-import { getCurrentUserId } from "@/lib/server/currentUser";
+import { requireUser } from "@/lib/server/currentUser";
 import { describeError } from "@/lib/server/errors";
 import { listProjects } from "@/lib/server/projects";
 import "./projects.css";
@@ -13,11 +16,14 @@ export const metadata: Metadata = { title: "My projects — Spacify" };
 
 export default async function ProjectsPage() {
   await connection(); // always read fresh from the database, never prerender at build time
+  let user: CurrentUser | null = null;
   let projects: ProjectListItem[] = [];
   let error: string | null = null;
   try {
-    projects = await listProjects(await getCurrentUserId());
+    user = await requireUser("/projects");
+    projects = await listProjects(user.id);
   } catch (err) {
+    unstable_rethrow(err); // let the redirect to /login through
     error = describeError(err, "projects page").message;
   }
 
@@ -32,6 +38,7 @@ export default async function ProjectsPage() {
         </Link>
         <div className="pp-nav-right">
           <ThemeToggleButton className="pp-theme" />
+          {user && <UserMenu user={user} />}
         </div>
       </header>
 

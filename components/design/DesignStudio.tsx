@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/components/ThemeProvider";
+import type { CurrentUser } from "@/lib/auth";
 import { downloadDataUrl } from "@/lib/browser";
 import type { Access, SaveResult, SavedProject } from "@/lib/projects";
 import {
@@ -36,6 +37,8 @@ import { UploadFlow } from "./UploadFlow";
 type Props = {
   /** Start with sample rooms (not saved). */
   demo: boolean;
+  /** Who's logged in; null only in the demo, where saving then asks you to log in. */
+  user: CurrentUser | null;
   /** Project loaded from PostgreSQL by the page, or null for a new one. */
   initialProject: SavedProject | null;
   /** Why the requested project couldn't be loaded (e.g. database down). */
@@ -56,7 +59,7 @@ function initialRooms(demo: boolean, project: SavedProject | null): Room[] {
  * The design page. All project state lives here and flows down to the panels and the 3D canvas.
  * Saving sends name, floors and rooms to /api/projects (PostgreSQL).
  */
-export function DesignStudio({ demo, initialProject, loadError }: Props) {
+export function DesignStudio({ demo, user, initialProject, loadError }: Props) {
   const { theme } = useTheme();
 
   // ─── Project state ───────────────────────────────────────
@@ -214,6 +217,7 @@ export function DesignStudio({ demo, initialProject, loadError }: Props) {
   });
 
   async function save() {
+    if (!user) return showToast("Log in to save your project.");
     if (saveState !== "unsaved") return;
     const sent: Snapshot = { name: projectName.trim() || "Untitled Project", floors, rooms };
     setSaving(true);
@@ -296,6 +300,7 @@ export function DesignStudio({ demo, initialProject, loadError }: Props) {
   return (
     <div className="studio">
       <Topbar
+        user={user}
         tab={tab}
         onTab={setTab}
         walking={walking}

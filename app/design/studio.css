@@ -22,6 +22,7 @@
 .studio .save-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border-radius: 7px; font-size: 12px; font-weight: 500; white-space: nowrap; border: 1px solid var(--border); background: transparent; color: var(--text3); transition: all var(--tr); }
 .studio .save-btn.unsaved { background: var(--accent); color: var(--accent-dark); border-color: transparent; cursor: pointer; }
 .studio .save-btn.unsaved:hover { opacity: 0.85; }
+.studio a.save-btn { text-decoration: none; }
 .studio .save-btn.saving { color: var(--text2); }
 .studio .save-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
 .studio .topbar-center { display: flex; gap: 6px; flex: 1; justify-content: center; }
