@@ -9,13 +9,18 @@ import {
   DEMO_ROOMS,
   MAX_FLOORS,
   ROOM_DEFAULTS,
+  defaultOpenings,
   describeProject,
+  fitOpenings,
+  freeSpot,
+  placeRooms,
   totalArea,
   type CameraPreset,
   type LayerName,
   type Layers,
   type Room,
   type RoomDesign,
+  type RoomDraft,
   type StudioTab,
 } from "@/lib/rooms";
 import { CanvasOverlays } from "./CanvasOverlays";
@@ -102,11 +107,20 @@ export function DesignStudio({ demo, initialProject, loadError }: Props) {
   // ─── Room actions ────────────────────────────────────────
   function addRoom(name: string) {
     const [w, l] = ROOM_DEFAULTS[name] ?? [10, 10];
-    setRooms((prev) => [...prev, { id: nextId.current++, name, w, l, h: 10, floor: 1 }]);
+    const id = nextId.current++;
+    setRooms((prev) => [...prev, { id, name, w, l, h: 10, floor: 1, ...freeSpot(prev, 1), openings: defaultOpenings(w) }]);
+    setSelectedId(id);
   }
 
+  /** Applies a change to one room; doors and windows are kept inside walls that got shorter. */
   function updateRoom(id: number, patch: Partial<Omit<Room, "id">>) {
-    setRooms((prev) => prev.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+    setRooms((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const next = { ...r, ...patch };
+        return { ...next, openings: fitOpenings(next) };
+      })
+    );
   }
 
   function deleteRoom(id: number) {
@@ -129,10 +143,10 @@ export function DesignStudio({ demo, initialProject, loadError }: Props) {
     setRooms((prev) => (prev.some((r) => r.floor > n) ? prev.map((r) => (r.floor > n ? { ...r, floor: n } : r)) : prev));
   }
 
-  function acceptSketch(found: Omit<Room, "id">[]) {
+  function acceptSketch(found: RoomDraft[]) {
     const maxFloor = Math.min(MAX_FLOORS, Math.max(1, ...found.map((r) => r.floor)));
     setFloorsState((f) => Math.max(f, maxFloor));
-    setRooms(withIds(found.map((r) => ({ ...r, floor: Math.min(r.floor, MAX_FLOORS) }))));
+    setRooms(withIds(placeRooms(found.map((r) => ({ ...r, floor: Math.min(r.floor, MAX_FLOORS) })))));
     setDesigns({});
     setSelectedId(null);
     setManualMode(false);
@@ -352,6 +366,9 @@ export function DesignStudio({ demo, initialProject, loadError }: Props) {
               floors={floors}
               theme={theme}
               projectName={projectName}
+              selectedId={selectedId}
+              onSelectRoom={setSelectedId}
+              onUpdateRoom={updateRoom}
               onExported={() => {
                 recordExport("2d");
                 showToast("2D plan exported!");

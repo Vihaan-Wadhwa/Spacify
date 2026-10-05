@@ -1,6 +1,6 @@
 # Spacify
 
-Browser-based 3D home design: upload a floor-plan sketch (or add rooms by hand), see it in 3D, switch to a to-scale 2D plan, walk through it with WASD, and ask the AI assistant for design ideas.
+Browser-based 3D home design: upload a floor-plan sketch (or add rooms by hand), arrange it on a to-scale 2D plan (move and resize rooms, place doors and windows), see it in 3D, walk through it with WASD, and ask the AI assistant for design ideas.
 
 Next.js (App Router, TypeScript) + Three.js, with projects stored in PostgreSQL.
 
@@ -27,10 +27,11 @@ The schema is plain SQL so every table, constraint and trigger is visible:
 
 | File | What it is |
 |---|---|
-| `db/schema.sql` | The 8 tables from the DBMS report, with CHECK/UNIQUE/FK constraints, FK indexes, 3 triggers, the `project_access()` function and the `project_summary` view |
+| `db/schema.sql` | The 8 tables from the DBMS report plus `openings` (doors and windows), with CHECK/UNIQUE/FK constraints, FK indexes, 3 triggers, the `project_access()` function and the `project_summary` view |
 | `db/seed.sql` | Two users, two projects, one shared between them, plus furniture, exports and AI suggestions |
 | `db/queries.sql` | 10 example queries for the report (joins, GROUP BY/HAVING, correlated subquery, LEFT JOIN, view, function, a trigger demo) |
 | `db/reset.sql` | Drops everything (used by `npm run db:reset`) |
+| `db/upgrade.sql` | Adds `openings` to a database created before the plan editor (`npm run db:setup` runs it when needed) |
 
 **Getting a PostgreSQL server** — pick one:
 
@@ -41,11 +42,11 @@ The schema is plain SQL so every table, constraint and trigger is visible:
    ```
 3. **Free cloud database** (Neon or Supabase): create a project and paste its connection string into `DATABASE_URL`.
 
-Then `npm run db:setup` (safe to re-run; it won't touch existing data). `npm run db:reset` wipes everything and starts again. To look inside: `psql postgres://spacify:spacify@localhost:5432/spacify`, then e.g. `\dt`, `\d rooms`, or `\i db/queries.sql`.
+Then `npm run db:setup` (safe to re-run; it won't touch existing data, and it brings an older database up to date). `npm run db:reset` wipes everything and starts again. To look inside: `psql postgres://spacify:spacify@localhost:5432/spacify`, then e.g. `\dt`, `\d rooms`, or `\i db/queries.sql`.
 
 **What the app does with it**
 
-- **Save** sends the whole project (name, floors, rooms) to `PUT /api/projects/:id` (or `POST /api/projects` the first time). In one transaction the server updates rooms that still exist, inserts new ones, deletes removed ones and stores each room's position on the 2D plan. The `trg_rooms_total_area` trigger then recalculates `projects.total_area`, and `trg_projects_updated_at` stamps `updated_at`.
+- **Save** sends the whole project (name, floors, rooms with their plan positions, doors and windows) to `PUT /api/projects/:id` (or `POST /api/projects` the first time). In one transaction the server updates rooms that still exist, inserts new ones, deletes removed ones, and rewrites each room's rows in `openings`. The `trg_rooms_total_area` trigger then recalculates `projects.total_area`, and `trg_projects_updated_at` stamps `updated_at`.
 - **Access control** runs in SQL: every read or write calls `project_access(user, project)`, which returns `owner`, `edit`, `view` or nothing, using `shared_projects`. A view-only project opens with Save disabled.
 - **Exports** (2D or 3D PNG) of a saved project add a row to `exports`. **AI assistant answers** for a saved project go into `ai_suggestions` (only answers from the real chat workflow, not the built-in canned ones).
 - **Wall colours and flooring aren't saved yet.** They go to MongoDB in Task 3.3.
@@ -120,16 +121,16 @@ components/
     RoomPanel.tsx       room list, add room, floors
     DesignPanel.tsx     wall colour, flooring, ceiling height
     CanvasOverlays.tsx  layer toggles, camera presets, zoom
-    PlanView.tsx        2D plan + PNG export
+    PlanView.tsx        2D plan editor (move/resize rooms, doors, windows) + PNG export
     ChatView.tsx        AI assistant
     UploadFlow.tsx      upload card + analysis overlay
     TutorialModal.tsx   sketch tutorial
     Topbar.tsx
 lib/
-  rooms.ts              Room type, colours, defaults, auto-layout
+  rooms.ts              Room and opening types, colours, defaults, walls, placement
   projects.ts           project types + zod validation shared by browser and API
   scene/SpacifyScene.ts the Three.js scene (orbit, picking, walkthrough, export)
-  plan.ts               2D plan drawing
+  plan.ts               2D plan drawing, hit testing and snapping
   browser.ts            image compression, downloads
   server/
     db.ts               pg connection pool, query(), withTransaction()
@@ -140,6 +141,14 @@ lib/
 ```
 
 React owns the state; `SpacifyScene` only draws it. `DesignStudio` passes rooms, floors, layers, per-room designs and the selection down to `<ThreeCanvas />`, which pushes them into the scene.
+
+## The 2D plan editor (Floor Plan tab)
+
+- **Move a room:** drag it. Its edges snap to other rooms' walls (a dashed guide shows the line), otherwise to a 0.5 ft grid. Arrow keys nudge the selected room by 0.5 ft (Shift: 5 ft).
+- **Resize:** drag the handles on the selected room's corners and edges (4–40 ft per side). Doors and windows stay where they are; if a wall gets too short for one, it shrinks.
+- **Doors and windows:** pick **+ Door** or **+ Window** and click a wall. A door swings into the room you clicked from. Drag one along its wall (or onto another wall of the same room), set its width in the bar at the top, or press Delete to remove it. A door on a wall two rooms share opens both walls in 3D.
+- **View:** scroll or pinch to zoom, drag empty space to pan, **Fit** to see the whole floor. Rooms that overlap turn red.
+- New rooms are placed against the east side of the floor's existing rooms; a sketch's rooms are packed in rows with walls touching. The 3D view uses the same positions.
 
 ## Changes from the HTML version
 

@@ -1,6 +1,6 @@
 -- ════════════════════════════════════════════════════════════════════
 --  Spacify — PostgreSQL schema
---  8 tables from the DBMS report, plus: indexes on every foreign key,
+--  8 tables from the DBMS report (+ openings for doors and windows), plus: indexes on every foreign key,
 --  CHECK constraints on all dimensions, and triggers that keep derived
 --  data (total_area, updated_at) correct.
 --  Units: all room/furniture dimensions and positions are in feet.
@@ -41,7 +41,7 @@ CREATE TABLE rooms (
   length      NUMERIC(10,2) NOT NULL CHECK (length > 0 AND length <= 100),
   height      NUMERIC(10,2) NOT NULL DEFAULT 10 CHECK (height BETWEEN 7 AND 20),
   floor       INT           NOT NULL DEFAULT 1  CHECK (floor BETWEEN 1 AND 3),
-  position_x  NUMERIC(10,2) NOT NULL DEFAULT 0,   -- top-left corner on the 2D plan
+  position_x  NUMERIC(10,2) NOT NULL DEFAULT 0,   -- north-west corner on the 2D plan (x east, z south)
   position_z  NUMERIC(10,2) NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_rooms_project ON rooms(project_id);
@@ -108,6 +108,18 @@ CREATE TABLE shared_projects (
   UNIQUE (project_id, shared_with)   -- one permission per user per project
 );
 CREATE INDEX idx_shared_projects_user ON shared_projects(shared_with);
+
+-- ─── 9. openings (doors and windows in a room's walls) ───────────────
+-- Not in the original report: added with the 2D plan editor. db/upgrade.sql adds it to older databases.
+CREATE TABLE openings (
+  id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  room_id      INT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  kind         VARCHAR(10)   NOT NULL CHECK (kind IN ('door', 'window')),
+  wall         CHAR(1)       NOT NULL CHECK (wall IN ('n', 'e', 's', 'w')),
+  wall_offset  NUMERIC(10,2) NOT NULL CHECK (wall_offset >= 0),  -- from the wall's west/north end to the opening
+  width        NUMERIC(10,2) NOT NULL CHECK (width > 0 AND width <= 40)
+);
+CREATE INDEX idx_openings_room ON openings(room_id);
 
 
 -- ════════════════════════════════════════════════════════════════════

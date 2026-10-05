@@ -1,6 +1,6 @@
 // Creates the Spacify tables and sample data in the database at DATABASE_URL (read from .env.local).
 //
-//   npm run db:setup    create tables + sample data (skips if the tables already exist)
+//   npm run db:setup    create tables + sample data (if they already exist, only adds anything newer: db/upgrade.sql)
 //   npm run db:reset    DELETE EVERYTHING, then recreate tables + sample data
 //
 // Add --no-seed to either to skip the sample data.
@@ -36,8 +36,15 @@ try {
 try {
   const { rows } = await client.query("SELECT to_regclass('public.users') IS NOT NULL AS exists");
   if (rows[0].exists && !reset) {
+    const { rows: upgrade } = await client.query("SELECT to_regclass('public.openings') IS NULL AS needed");
+    if (upgrade[0].needed) {
+      await client.query("BEGIN");
+      await client.query(await sql("upgrade.sql"));
+      await client.query("COMMIT");
+      console.log("• Added the openings table (doors and windows) and gave existing rooms their door and window");
+    }
     const { rows: counts } = await client.query("SELECT (SELECT count(*) FROM users) AS users, (SELECT count(*) FROM projects) AS projects");
-    console.log(`✓ Already set up (${counts[0].users} users, ${counts[0].projects} projects). Nothing to do.`);
+    console.log(`✓ ${upgrade[0].needed ? "Up to date" : "Already set up"} (${counts[0].users} users, ${counts[0].projects} projects).${upgrade[0].needed ? "" : " Nothing to do."}`);
     console.log("  To wipe it and start again: npm run db:reset");
   } else {
     await client.query("BEGIN");
@@ -46,7 +53,7 @@ try {
       console.log("• Dropped existing tables");
     }
     await client.query(await sql("schema.sql"));
-    console.log("• Created 8 tables, 3 triggers, project_access() and project_summary");
+    console.log("• Created 9 tables, 3 triggers, project_access() and project_summary");
     if (seed) {
       await client.query(await sql("seed.sql"));
       console.log("• Added sample data (log-in for later: demo@spacify.in / spacify123)");

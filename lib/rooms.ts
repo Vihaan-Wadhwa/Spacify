@@ -1,16 +1,53 @@
 // Shared types and constants for the design studio.
-// The Room shape matches the old vanilla-JS build; the DB layer (Task 3) will map it to the `rooms` table.
+// Rooms map to the `rooms` table and their doors/windows to `openings`.
+//
+// Plan coordinates are in feet: x grows east (right), z grows south (down), north is up.
+
+/** A side of a room: north (top on the plan), east, south, west. */
+export type Wall = "n" | "e" | "s" | "w";
+export const WALLS: Wall[] = ["n", "e", "s", "w"];
+
+export type OpeningKind = "door" | "window";
+
+/** A door or window in one of a room's walls. */
+export type Opening = {
+  /** Unique within its room. */
+  id: number;
+  kind: OpeningKind;
+  wall: Wall;
+  /** feet from the wall's west end (n/s walls) or north end (e/w walls) to the near edge of the opening */
+  offset: number;
+  /** feet */
+  width: number;
+};
 
 export type Room = {
   id: number;
   name: string;
-  /** width in feet */
+  /** width (east–west) in feet */
   w: number;
-  /** length in feet */
+  /** length (north–south) in feet */
   l: number;
   /** ceiling height in feet */
   h: number;
   floor: number;
+  /** west edge on the plan, in feet */
+  x: number;
+  /** north edge on the plan, in feet */
+  z: number;
+  openings: Opening[];
+};
+
+/** A room before it has a place on the plan or any doors (from a sketch, or picked from the list). */
+export type RoomDraft = Pick<Room, "name" | "w" | "l" | "h" | "floor">;
+
+/** Width and length limits the editor keeps rooms within, in feet. */
+export const ROOM_SIZE = { min: 4, max: 40 };
+
+/** Opening widths in feet: allowed range and the width a new one starts at. */
+export const OPENING_SIZE: Record<OpeningKind, { min: number; max: number; initial: number }> = {
+  door: { min: 2, max: 8, initial: 3 },
+  window: { min: 1, max: 12, initial: 4 },
 };
 
 export type RoomDesign = {
@@ -86,45 +123,145 @@ export function flooringColor(name: string | undefined): string | undefined {
   return FLOOR_OPTIONS.find((f) => f.name === name)?.color;
 }
 
-/** Sample rooms loaded by /design?demo=1. */
-export const DEMO_ROOMS: Omit<Room, "id">[] = [
-  { name: "Living Room", w: 18, l: 14, h: 10, floor: 1 },
-  { name: "Master Bedroom", w: 14, l: 13, h: 10, floor: 1 },
-  { name: "Kitchen", w: 12, l: 10, h: 10, floor: 1 },
-  { name: "Bedroom 2", w: 12, l: 12, h: 10, floor: 1 },
-  { name: "Bathroom", w: 8, l: 6, h: 10, floor: 1 },
-  { name: "Dining Room", w: 14, l: 12, h: 10, floor: 1 },
-];
+// ─── Walls and openings ──────────────────────────────────────
 
-export type LayoutBox = { id: number; x: number; z: number; w: number; l: number; h: number };
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const round1 = (v: number) => Math.round(v * 10) / 10;
+
+export function wallLength(room: Pick<Room, "w" | "l">, wall: Wall): number {
+  return wall === "n" || wall === "s" ? room.w : room.l;
+}
+
+/** A wall as a line on the plan: n/s walls run along x at z = `at`; e/w walls run along z at x = `at`. */
+export type WallLine = { axis: "x" | "z"; at: number; from: number; to: number };
+
+export function wallLine(r: Pick<Room, "x" | "z" | "w" | "l">, wall: Wall): WallLine {
+  switch (wall) {
+    case "n":
+      return { axis: "x", at: r.z, from: r.x, to: r.x + r.w };
+    case "s":
+      return { axis: "x", at: r.z + r.l, from: r.x, to: r.x + r.w };
+    case "w":
+      return { axis: "z", at: r.x, from: r.z, to: r.z + r.l };
+    case "e":
+      return { axis: "z", at: r.x + r.w, from: r.z, to: r.z + r.l };
+  }
+}
+
+/** Keeps every opening inside its wall, shrinking it if the wall is now too short (e.g. after a resize). */
+export function fitOpenings(room: Pick<Room, "w" | "l" | "openings">): Opening[] {
+  return room.openings.map((o) => {
+    const len = wallLength(room, o.wall);
+    const width = Math.min(o.width, len);
+    const offset = clamp(o.offset, 0, len - width);
+    return width === o.width && offset === o.offset ? o : { ...o, width, offset };
+  });
+}
+
+/** What a new room starts with: a door near the west end of the south wall and a window centred on the north wall. */
+export function defaultOpenings(w: number): Opening[] {
+  const door = Math.min(OPENING_SIZE.door.initial, w / 2);
+  const win = Math.min(OPENING_SIZE.window.initial, w / 2);
+  return [
+    { id: 1, kind: "door", wall: "s", offset: round1(Math.min(1, (w - door) / 2)), width: door },
+    { id: 2, kind: "window", wall: "n", offset: round1((w - win) / 2), width: win },
+  ];
+}
+
+export type WallCut = { kind: OpeningKind; from: number; to: number };
 
 /**
- * Row-based auto layout: packs rooms left-to-right, wraps when a row gets too wide,
- * then centres the result on the origin. Units are whatever `scale` turns feet into.
- * The server uses the same packing (in feet) to store each room's position_x / position_z on save.
+ * The stretches of a room's wall that are open: its own doors/windows, plus those of any room on the same floor
+ * whose wall lies along the same line (a shared wall), so a door between two rooms goes through both walls.
+ * `from`/`to` are plan coordinates along the wall's axis.
  */
-export function layoutRooms(rooms: Room[], opts: { scale: number; gap: number; maxRowWidth: number; center: boolean }): LayoutBox[] {
-  const boxes: LayoutBox[] = [];
-  let x = 0;
-  let z = 0;
-  let rowH = 0;
-  for (const r of rooms) {
-    const w = r.w * opts.scale;
-    const l = r.l * opts.scale;
-    if (x + w > opts.maxRowWidth && x > 0) {
-      z += rowH + opts.gap;
-      x = 0;
-      rowH = 0;
+export function wallCuts(room: Room, wall: Wall, floorRooms: Room[]): WallCut[] {
+  const line = wallLine(room, wall);
+  const cuts: WallCut[] = [];
+  for (const other of floorRooms) {
+    for (const o of other.openings) {
+      const ol = wallLine(other, o.wall);
+      if (ol.axis !== line.axis || Math.abs(ol.at - line.at) > 0.05) continue;
+      const from = Math.max(line.from, ol.from + o.offset);
+      const to = Math.min(line.to, ol.from + o.offset + o.width);
+      if (to - from > 0.05) cuts.push({ kind: o.kind, from, to });
     }
-    boxes.push({ id: r.id, x, z, w, l, h: r.h * opts.scale });
-    x += w + opts.gap;
-    rowH = Math.max(rowH, l);
   }
-  if (!opts.center || !boxes.length) return boxes;
-  const offX = Math.max(...boxes.map((b) => b.x + b.w)) / 2;
-  const offZ = Math.max(...boxes.map((b) => b.z + b.l)) / 2;
-  return boxes.map((b) => ({ ...b, x: b.x - offX, z: b.z - offZ }));
+  return cuts.sort((a, b) => a.from - b.from);
 }
+
+// ─── Placement ───────────────────────────────────────────────
+
+export type Bounds = { minX: number; minZ: number; maxX: number; maxZ: number };
+
+/** The box around some rooms, or null if there are none. */
+export function planBounds(rooms: Room[]): Bounds | null {
+  if (!rooms.length) return null;
+  return {
+    minX: Math.min(...rooms.map((r) => r.x)),
+    minZ: Math.min(...rooms.map((r) => r.z)),
+    maxX: Math.max(...rooms.map((r) => r.x + r.w)),
+    maxZ: Math.max(...rooms.map((r) => r.z + r.l)),
+  };
+}
+
+/** Where a newly added room goes: against the east side of everything already on its floor, level with the top. */
+export function freeSpot(rooms: Room[], floor: number): { x: number; z: number } {
+  const b = planBounds(rooms.filter((r) => r.floor === floor));
+  return b ? { x: b.maxX, z: b.minZ } : { x: 0, z: 0 };
+}
+
+/**
+ * Gives rooms that have no position yet (a sketch's rooms) a place and their default door and window.
+ * Each floor is packed in rows, left to right with walls touching, wrapping when a row passes 60 ft.
+ */
+export function placeRooms(drafts: RoomDraft[]): Omit<Room, "id">[] {
+  const rows = new Map<number, { x: number; z: number; rowL: number }>();
+  return drafts.map((r) => {
+    const row = rows.get(r.floor) ?? { x: 0, z: 0, rowL: 0 };
+    if (row.x + r.w > 60 && row.x > 0) {
+      row.z += row.rowL;
+      row.x = 0;
+      row.rowL = 0;
+    }
+    const placed = { ...r, x: row.x, z: row.z, openings: defaultOpenings(r.w) };
+    row.x += r.w;
+    row.rowL = Math.max(row.rowL, r.l);
+    rows.set(r.floor, row);
+    return placed;
+  });
+}
+
+/** Ids of rooms that overlap another room on the same floor (touching walls don't count). */
+export function overlappingIds(rooms: Room[]): Set<number> {
+  const ids = new Set<number>();
+  for (let i = 0; i < rooms.length; i++) {
+    for (let j = i + 1; j < rooms.length; j++) {
+      const a = rooms[i];
+      const b = rooms[j];
+      if (a.floor !== b.floor) continue;
+      const ox = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      const oz = Math.min(a.z + a.l, b.z + b.l) - Math.max(a.z, b.z);
+      if (ox > 0.05 && oz > 0.05) {
+        ids.add(a.id);
+        ids.add(b.id);
+      }
+    }
+  }
+  return ids;
+}
+
+/** Sample rooms loaded by /design?demo=1: a 2BHK with shared walls. */
+export const DEMO_ROOMS: Omit<Room, "id">[] = (
+  [
+    { name: "Living Room", w: 18, l: 14, x: 0, z: 0 },
+    { name: "Dining Room", w: 14, l: 12, x: 18, z: 0 },
+    { name: "Kitchen", w: 12, l: 10, x: 32, z: 0 },
+    { name: "Master Bedroom", w: 14, l: 13, x: 0, z: 14 },
+    { name: "Bathroom", w: 8, l: 6, x: 14, z: 14 },
+    { name: "Bedroom 2", w: 12, l: 12, x: 22, z: 14 },
+  ] as const
+).map((r) => ({ ...r, h: 10, floor: 1, openings: defaultOpenings(r.w) }));
 
 export function totalArea(rooms: Room[]): number {
   return rooms.reduce((sum, r) => sum + r.w * r.l, 0);

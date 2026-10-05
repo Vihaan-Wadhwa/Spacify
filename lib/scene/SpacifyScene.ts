@@ -1,10 +1,12 @@
 import * as THREE from "three";
 import {
+  WALLS,
   flooringColor,
-  layoutRooms,
+  planBounds,
   roomColor,
+  wallCuts,
+  wallLine,
   type CameraPreset,
-  type LayoutBox,
   type Layers,
   type Room,
   type RoomDesign,
@@ -25,9 +27,15 @@ type Handlers = {
 
 type Spherical = { theta: number; phi: number; radius: number };
 
+/** A room's box in scene units. */
+type Box = { x: number; z: number; w: number; l: number; h: number };
+
 const FT_TO_UNITS = 0.3;
 const FLOOR_SPACING = 3.2;
 const WALL_T = 0.12;
+// Heights in feet above the floor
+const DOOR_TOP = 7;
+const SILL = 3;
 const MIN_RADIUS = 5;
 const MAX_RADIUS = 80;
 
@@ -248,19 +256,30 @@ export class SpacifyScene {
     const state = this.state;
     if (!state) return;
 
+    // Rooms sit where they are on the 2D plan; the whole house is centred on the origin so floors stay stacked.
+    const b = planBounds(state.rooms);
+    if (!b) return;
+    const cx = (b.minX + b.maxX) / 2;
+    const cz = (b.minZ + b.maxZ) / 2;
     for (let floor = 1; floor <= state.floors; floor++) {
       const floorRooms = state.rooms.filter((r) => r.floor === floor);
-      if (!floorRooms.length) continue;
-      const layout = layoutRooms(floorRooms, { scale: FT_TO_UNITS, gap: 0.15, maxRowWidth: 18, center: true });
       const y0 = (floor - 1) * FLOOR_SPACING;
-      for (const pos of layout) {
-        const room = floorRooms.find((r) => r.id === pos.id)!;
-        this.buildRoom(room, pos, y0, state.designs[room.id] ?? {}, state.layers);
+      for (const room of floorRooms) {
+        const design = state.designs[room.id] ?? {};
+        const pos: Box = {
+          x: (room.x - cx) * FT_TO_UNITS,
+          z: (room.z - cz) * FT_TO_UNITS,
+          w: room.w * FT_TO_UNITS,
+          l: room.l * FT_TO_UNITS,
+          h: room.h * FT_TO_UNITS,
+        };
+        this.buildRoom(room, pos, y0, design, state.layers);
+        this.buildWalls(room, floorRooms, { x: cx, z: cz }, y0, design);
       }
     }
   }
 
-  private buildRoom(r: Room, pos: LayoutBox, y0: number, design: RoomDesign, layers: Layers) {
+  private buildRoom(r: Room, pos: Box, y0: number, design: RoomDesign, layers: Layers) {
     const colCSS = roomColor(r.name);
     const floorColor = flooringColor(design.flooring) ?? colCSS;
 
@@ -274,50 +293,12 @@ export class SpacifyScene {
     floorMesh.userData = { roomId: r.id, type: "floor" };
     this.floorGroup.add(floorMesh);
 
-    // Walls — four sides, open top. A chosen wall colour applies to all four.
-    const wallMat = new THREE.MeshLambertMaterial({ color: design.wallColor ?? 0xfafafa, transparent: true, opacity: 0.9 });
-    const sideMat = design.wallColor ? wallMat : new THREE.MeshLambertMaterial({ color: 0xe8e8e8, transparent: true, opacity: 0.85 });
-    const h = pos.h;
-    const walls: { sx: number; sz: number; x: number; z: number; mat: THREE.Material }[] = [
-      { sx: pos.w + WALL_T, sz: WALL_T, x: pos.x + pos.w / 2, z: pos.z - WALL_T / 2, mat: wallMat }, // back
-      { sx: pos.w + WALL_T, sz: WALL_T, x: pos.x + pos.w / 2, z: pos.z + pos.l + WALL_T / 2, mat: wallMat }, // front
-      { sx: WALL_T, sz: pos.l, x: pos.x - WALL_T / 2, z: pos.z + pos.l / 2, mat: sideMat }, // left
-      { sx: WALL_T, sz: pos.l, x: pos.x + pos.w + WALL_T / 2, z: pos.z + pos.l / 2, mat: sideMat }, // right
-    ];
-    for (const { sx, sz, x, z, mat } of walls) {
-      const wall = new THREE.Mesh(new THREE.BoxGeometry(sx, h, sz), mat);
-      wall.position.set(x, y0 + h / 2, z);
-      wall.castShadow = true;
-      wall.receiveShadow = true;
-      wall.userData = { roomId: r.id, type: "wall" };
-      this.wallGroup.add(wall);
-    }
-
-    // Door (a dark box on the front wall)
-    const doorW = Math.min(0.8, pos.w * 0.3);
-    const doorH = Math.min(2.4, h * 0.7);
-    const door = new THREE.Mesh(new THREE.BoxGeometry(doorW, doorH, WALL_T + 0.02), new THREE.MeshLambertMaterial({ color: 0x1a1a1a }));
-    door.position.set(pos.x + pos.w * 0.3, y0 + doorH / 2, pos.z + pos.l + WALL_T / 2);
-    door.userData = { roomId: r.id, type: "door" };
-    this.wallGroup.add(door);
-
-    // Window (back wall, upper half)
-    if (pos.w > 1.2) {
-      const winW = Math.min(1.2, pos.w * 0.4);
-      const win = new THREE.Mesh(
-        new THREE.BoxGeometry(winW, h * 0.35, WALL_T + 0.02),
-        new THREE.MeshLambertMaterial({ color: 0x88ccff, transparent: true, opacity: 0.5 })
-      );
-      win.position.set(pos.x + pos.w * 0.7, y0 + h * 0.6, pos.z - WALL_T / 2);
-      this.wallGroup.add(win);
-    }
-
     // Ceiling slab
     const ceil = new THREE.Mesh(
       new THREE.BoxGeometry(pos.w, 0.06, pos.l),
       new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.15 })
     );
-    ceil.position.set(pos.x + pos.w / 2, y0 + h, pos.z + pos.l / 2);
+    ceil.position.set(pos.x + pos.w / 2, y0 + pos.h, pos.z + pos.l / 2);
     this.wallGroup.add(ceil);
 
     if (layers.furniture) this.addFurniture(r, pos, y0);
@@ -334,7 +315,63 @@ export class SpacifyScene {
     }
   }
 
-  private addLabel(r: Room, pos: LayoutBox, y0: number, colCSS: string) {
+  /**
+   * Four walls, open top, each split around its doors and windows (including ones that belong to the room on the other
+   * side of a shared wall). A door leaves a gap with a lintel above; a window gets a sill, glass and a header.
+   */
+  private buildWalls(r: Room, floorRooms: Room[], center: { x: number; z: number }, y0: number, design: RoomDesign) {
+    // A chosen wall colour applies to all four sides; otherwise the e/w sides are a touch darker, as before.
+    const wallMat = new THREE.MeshLambertMaterial({ color: design.wallColor ?? 0xfafafa, transparent: true, opacity: 0.9 });
+    const sideMat = design.wallColor ? wallMat : new THREE.MeshLambertMaterial({ color: 0xe8e8e8, transparent: true, opacity: 0.85 });
+    const glassMat = new THREE.MeshLambertMaterial({ color: 0x88ccff, transparent: true, opacity: 0.5 });
+    const h = r.h;
+    const doorTop = Math.min(DOOR_TOP, h - 1);
+    const sill = Math.min(SILL, doorTop - 1);
+
+    for (const wall of WALLS) {
+      const line = wallLine(r, wall);
+      const mat = line.axis === "x" ? wallMat : sideMat;
+      // Walls sit just outside the room; n/s walls run half a wall past each end to close the corners.
+      const outward = wall === "n" || wall === "w" ? -1 : 1;
+      const across = (line.at - (line.axis === "x" ? center.z : center.x)) * FT_TO_UNITS + (outward * WALL_T) / 2;
+      const ext = line.axis === "x" ? WALL_T / 2 / FT_TO_UNITS : 0;
+
+      /** One box along this wall, from `from` to `to` (feet along the wall) and `bottom` to `top` (feet up). */
+      const piece = (from: number, to: number, bottom: number, top: number, material: THREE.Material, thickness = WALL_T) => {
+        if (to - from < 0.01 || top - bottom < 0.01) return;
+        const len = (to - from) * FT_TO_UNITS;
+        const mid = ((from + to) / 2 - (line.axis === "x" ? center.x : center.z)) * FT_TO_UNITS;
+        const height = (top - bottom) * FT_TO_UNITS;
+        const mesh = new THREE.Mesh(
+          line.axis === "x" ? new THREE.BoxGeometry(len, height, thickness) : new THREE.BoxGeometry(thickness, height, len),
+          material
+        );
+        const y = y0 + ((bottom + top) / 2) * FT_TO_UNITS;
+        if (line.axis === "x") mesh.position.set(mid, y, across);
+        else mesh.position.set(across, y, mid);
+        mesh.castShadow = material !== glassMat;
+        mesh.receiveShadow = true;
+        mesh.userData = { roomId: r.id, type: "wall" };
+        this.wallGroup.add(mesh);
+      };
+
+      let solidFrom = line.from - ext;
+      for (const cut of wallCuts(r, wall, floorRooms)) {
+        piece(solidFrom, cut.from, 0, h, mat);
+        if (cut.kind === "door") {
+          piece(cut.from, cut.to, doorTop, h, mat);
+        } else {
+          piece(cut.from, cut.to, 0, sill, mat);
+          piece(cut.from, cut.to, sill, doorTop, glassMat, WALL_T * 0.3);
+          piece(cut.from, cut.to, doorTop, h, mat);
+        }
+        solidFrom = Math.max(solidFrom, cut.to);
+      }
+      piece(solidFrom, line.to + ext, 0, h, mat);
+    }
+  }
+
+  private addLabel(r: Room, pos: Box, y0: number, colCSS: string) {
     const c = document.createElement("canvas");
     c.width = 256;
     c.height = 64;
@@ -363,7 +400,7 @@ export class SpacifyScene {
     this.labelGroup.add(label);
   }
 
-  private addFurniture(r: Room, pos: LayoutBox, y0: number) {
+  private addFurniture(r: Room, pos: Box, y0: number) {
     const wood = new THREE.MeshLambertMaterial({ color: 0xd4a96a });
     const dark = new THREE.MeshLambertMaterial({ color: 0x8b5e3c });
     const white = new THREE.MeshLambertMaterial({ color: 0xffffff });

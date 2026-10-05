@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { MAX_FLOORS, type Room } from "@/lib/rooms";
+import { MAX_FLOORS, type RoomDraft } from "@/lib/rooms";
 
 /**
  * One room as the vision model may describe it. The model sometimes spells keys out
@@ -61,9 +61,9 @@ function extractRoomArray(data: unknown): unknown[] | null {
 }
 
 /** Turns a raw AI response into validated rooms. Invalid entries are dropped, values are kept in sane ranges. */
-export function parseSketchRooms(data: unknown): Omit<Room, "id">[] {
+export function parseSketchRooms(data: unknown): RoomDraft[] {
   const raw = extractRoomArray(data) ?? [];
-  const rooms: Omit<Room, "id">[] = [];
+  const rooms: RoomDraft[] = [];
   for (const item of raw) {
     const parsed = RawRoom.safeParse(item);
     if (!parsed.success) continue;

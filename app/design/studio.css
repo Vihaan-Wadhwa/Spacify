@@ -154,11 +154,17 @@
 
 /* 2D PLAN VIEW */
 .studio .plan-view { position: absolute; inset: 0; background: var(--bg); z-index: 5; display: flex; flex-direction: column; }
-.studio .plan-toolbar { height: 44px; border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 10px; flex-shrink: 0; background: var(--bg2); }
-.studio .plan-toolbar > span { font-size: 11px; color: var(--text3); }
+.studio .plan-toolbar { height: 44px; border-bottom: 1px solid var(--border); display: flex; align-items: center; padding: 0 16px; gap: 10px; flex-shrink: 0; background: var(--bg2); overflow-x: auto; }
+.studio .plan-toolbar .plan-tools { display: flex; gap: 4px; padding-right: 10px; border-right: 1px solid var(--border); }
+.studio .plan-toolbar .cam-btn:disabled { opacity: 0.4; cursor: default; }
 .studio .plan-toolbar .spacer { margin-left: auto; display: flex; gap: 6px; }
 .studio .plan-canvas-wrap { flex: 1; min-height: 0; position: relative; }
-.studio .plan-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.studio .plan-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; user-select: none; }
+.studio .plan-hint { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); max-width: calc(100% - 96px); display: flex; align-items: center; flex-wrap: wrap; justify-content: center; gap: 4px 12px; padding: 6px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg2); font-size: 11px; color: var(--text2); text-align: center; }
+.studio .plan-hint b { color: var(--text); font-weight: 500; }
+.studio .plan-hint-field { display: inline-flex; align-items: center; gap: 6px; }
+.studio .plan-hint-field input { width: 56px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 3px 6px; font-size: 11px; color: var(--text); outline: none; }
+.studio .plan-hint-field input:focus { border-color: var(--border2); }
 
 /* WALKTHROUGH OVERLAY */
 .studio .wasd-overlay { position: absolute; inset: 0; z-index: 15; pointer-events: none; }

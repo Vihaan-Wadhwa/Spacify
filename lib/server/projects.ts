@@ -1,7 +1,7 @@
 import "server-only";
 import type { Pool, PoolClient } from "pg";
 import type { Access, ProjectInput, ProjectListItem, SaveResult, SavedProject } from "@/lib/projects";
-import { layoutRooms, type Room } from "@/lib/rooms";
+import type { Opening, Room } from "@/lib/rooms";
 import { getPool, query, withTransaction } from "./db";
 import { HttpError } from "./errors";
 
@@ -18,9 +18,34 @@ type ProjectRow = {
   access: Access;
 };
 
-type RoomRow = { id: number; room_type: string; width: number; length: number; height: number; floor: number };
+type RoomRow = {
+  id: number;
+  room_type: string;
+  width: number;
+  length: number;
+  height: number;
+  floor: number;
+  position_x: number;
+  position_z: number;
+};
 
-const toRoom = (r: RoomRow): Room => ({ id: r.id, name: r.room_type, w: r.width, l: r.length, h: r.height, floor: r.floor });
+type OpeningRow = { id: number; room_id: number; kind: Opening["kind"]; wall: Opening["wall"]; wall_offset: number; width: number };
+
+const ROOM_COLUMNS = "id, room_type, width, length, height, floor, position_x, position_z";
+
+const toRoom = (r: RoomRow, openings: Opening[] = []): Room => ({
+  id: r.id,
+  name: r.room_type,
+  w: r.width,
+  l: r.length,
+  h: r.height,
+  floor: r.floor,
+  x: r.position_x,
+  z: r.position_z,
+  openings,
+});
+
+const toOpening = (o: OpeningRow): Opening => ({ id: o.id, kind: o.kind, wall: o.wall, offset: o.wall_offset, width: o.width });
 
 const toListItem = (p: ProjectRow): ProjectListItem => ({
   id: p.id,
@@ -69,13 +94,24 @@ export async function listProjects(userId: number): Promise<ProjectListItem[]> {
 
 async function loadProject(db: Db, userId: number, projectId: number): Promise<SavedProject> {
   const access = await requireAccess(db, userId, projectId, "view");
-  const [{ rows: projects }, { rows: rooms }] = await Promise.all([
+  const [{ rows: projects }, { rows: rooms }, { rows: openings }] = await Promise.all([
     db.query<ProjectRow>(`SELECT ${SUMMARY_COLUMNS} FROM project_summary ps WHERE ps.id = $1`, [projectId]),
-    db.query<RoomRow>(`SELECT id, room_type, width, length, height, floor FROM rooms WHERE project_id = $1 ORDER BY id`, [projectId]),
+    db.query<RoomRow>(`SELECT ${ROOM_COLUMNS} FROM rooms WHERE project_id = $1 ORDER BY id`, [projectId]),
+    db.query<OpeningRow>(
+      `SELECT o.id, o.room_id, o.kind, o.wall, o.wall_offset, o.width
+         FROM openings o JOIN rooms r ON r.id = o.room_id
+        WHERE r.project_id = $1
+        ORDER BY o.id`,
+      [projectId]
+    ),
   ]);
+  const byRoom = Map.groupBy(openings, (o) => o.room_id);
   const project: Partial<ProjectListItem> = toListItem({ ...projects[0], access });
   delete project.roomCount;
-  return { ...(project as Omit<ProjectListItem, "roomCount">), rooms: rooms.map(toRoom) };
+  return {
+    ...(project as Omit<ProjectListItem, "roomCount">),
+    rooms: rooms.map((r) => toRoom(r, (byRoom.get(r.id) ?? []).map(toOpening))),
+  };
 }
 
 export async function getProject(userId: number, projectId: number): Promise<SavedProject> {
@@ -88,21 +124,10 @@ export async function listRooms(userId: number, projectId: number): Promise<Room
 
 // ─── Writes ──────────────────────────────────────────────────────────
 
-/** Where each room sits on the 2D plan (feet from the top-left), using the same packing as the plan view. */
-function planPositions(rooms: ProjectInput["rooms"]): Map<number, { x: number; z: number }> {
-  const positions = new Map<number, { x: number; z: number }>();
-  for (const floor of new Set(rooms.map((r) => r.floor))) {
-    const onFloor = rooms.filter((r) => r.floor === floor);
-    for (const box of layoutRooms(onFloor, { scale: 1, gap: 1.5, maxRowWidth: 60, center: false })) {
-      positions.set(box.id, { x: box.x, z: box.z });
-    }
-  }
-  return positions;
-}
-
 /**
  * Makes the project's rooms match `rooms` exactly: updates rooms whose id already belongs to the project,
- * inserts the rest, deletes the ones that are gone. Runs inside the caller's transaction.
+ * inserts the rest, deletes the ones that are gone, and replaces every room's doors and windows.
+ * Runs inside the caller's transaction.
  * Returns browser id → database id for every room.
  */
 async function syncRooms(client: PoolClient, projectId: number, rooms: ProjectInput["rooms"]): Promise<Record<number, number>> {
@@ -112,11 +137,9 @@ async function syncRooms(client: PoolClient, projectId: number, rooms: ProjectIn
 
   await client.query("DELETE FROM rooms WHERE project_id = $1 AND NOT (id = ANY($2::int[]))", [projectId, keptIds]);
 
-  const positions = planPositions(rooms);
   const idMap: Record<number, number> = {};
   for (const r of rooms) {
-    const pos = positions.get(r.id) ?? { x: 0, z: 0 };
-    const values = [r.name, r.w, r.l, r.h, r.floor, pos.x, pos.z];
+    const values = [r.name, r.w, r.l, r.h, r.floor, r.x, r.z];
     if (existingIds.has(r.id)) {
       await client.query(
         `UPDATE rooms SET room_type = $1, width = $2, length = $3, height = $4, floor = $5, position_x = $6, position_z = $7
@@ -131,6 +154,20 @@ async function syncRooms(client: PoolClient, projectId: number, rooms: ProjectIn
         [...values, projectId]
       );
       idMap[r.id] = rows[0].id;
+    }
+  }
+
+  // Openings have no identity worth keeping, so they're simply rewritten.
+  await client.query("DELETE FROM openings o USING rooms r WHERE o.room_id = r.id AND r.project_id = $1", [projectId]);
+  for (const r of rooms) {
+    for (const o of r.openings) {
+      await client.query("INSERT INTO openings (room_id, kind, wall, wall_offset, width) VALUES ($1, $2, $3, $4, $5)", [
+        idMap[r.id],
+        o.kind,
+        o.wall,
+        o.offset,
+        o.width,
+      ]);
     }
   }
   return idMap;
@@ -165,13 +202,14 @@ export async function deleteProject(userId: number, projectId: number): Promise<
   });
 }
 
-export async function addRoom(userId: number, projectId: number, room: Omit<Room, "id">): Promise<Room> {
+export async function addRoom(userId: number, projectId: number, room: Omit<Room, "id" | "openings">): Promise<Room> {
   return withTransaction(async (client) => {
     await requireAccess(client, userId, projectId, "edit");
     const { rows } = await client.query<RoomRow>(
-      `INSERT INTO rooms (project_id, room_type, width, length, height, floor) VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, room_type, width, length, height, floor`,
-      [projectId, room.name, room.w, room.l, room.h, room.floor]
+      `INSERT INTO rooms (project_id, room_type, width, length, height, floor, position_x, position_z)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING ${ROOM_COLUMNS}`,
+      [projectId, room.name, room.w, room.l, room.h, room.floor, room.x, room.z]
     );
     return toRoom(rows[0]);
   });

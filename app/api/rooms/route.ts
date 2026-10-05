@@ -27,9 +27,11 @@ const NewRoom = z.object({
   l: z.number().positive().max(100),
   h: z.number().min(7).max(20).default(10),
   floor: z.number().int().min(1).max(MAX_FLOORS).default(1),
+  x: z.number().min(-1000).max(1000).default(0),
+  z: z.number().min(-1000).max(1000).default(0),
 });
 
-/** POST /api/rooms — body: { projectId, name, w, l, h?, floor? } */
+/** POST /api/rooms — body: { projectId, name, w, l, h?, floor?, x?, z? } (x/z: position on the plan in feet) */
 export async function POST(request: Request) {
   try {
     const { projectId, ...room } = NewRoom.parse(await request.json().catch(() => null));

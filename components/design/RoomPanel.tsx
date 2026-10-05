@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MAX_FLOORS, ROOM_TYPES, roomColor, type Room } from "@/lib/rooms";
+import { MAX_FLOORS, ROOM_SIZE, ROOM_TYPES, roomColor, type Room } from "@/lib/rooms";
 
 type Props = {
   /** null = default: CSS shows it on desktop and hides it on phones */
@@ -20,8 +20,8 @@ type Props = {
 };
 
 const DIMENSIONS: { key: "w" | "l" | "h"; label: string; min: number; max: number }[] = [
-  { key: "w", label: "W (ft)", min: 4, max: 40 },
-  { key: "l", label: "L (ft)", min: 4, max: 40 },
+  { key: "w", label: "W (ft)", ...ROOM_SIZE },
+  { key: "l", label: "L (ft)", ...ROOM_SIZE },
   { key: "h", label: "H (ft)", min: 8, max: 16 },
 ];
 

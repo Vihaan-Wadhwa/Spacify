@@ -2,20 +2,18 @@
 
 import { useEffect, useState } from "react";
 import { compressImage } from "@/lib/browser";
-import type { Room } from "@/lib/rooms";
-
-type NewRoom = Omit<Room, "id">;
+import type { RoomDraft } from "@/lib/rooms";
 
 type UploadState =
   | { kind: "idle" }
   | { kind: "analysing"; preview: string }
-  | { kind: "found"; preview: string; rooms: NewRoom[] }
+  | { kind: "found"; preview: string; rooms: RoomDraft[] }
   | { kind: "error"; preview: string | null; message: string };
 
 type Props = {
   showEmptyState: boolean;
   inputRef: React.RefObject<HTMLInputElement | null>;
-  onAccept: (rooms: NewRoom[]) => void;
+  onAccept: (rooms: RoomDraft[]) => void;
   onShowTutorial: () => void;
   onAddManually: () => void;
 };
@@ -41,7 +39,7 @@ export function UploadFlow({ showEmptyState, inputRef, onAccept, onShowTutorial,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ image: image.base64, mimeType: image.mimeType }),
       });
-      const data = (await res.json()) as { rooms?: NewRoom[]; error?: string };
+      const data = (await res.json()) as { rooms?: RoomDraft[]; error?: string };
       if (res.ok && data.rooms?.length) setState({ kind: "found", preview: image.dataUrl, rooms: data.rooms });
       else setState({ kind: "error", preview: image.dataUrl, message: data.error ?? "Could not detect rooms. Try a clearer sketch or add rooms manually." });
     } catch {
