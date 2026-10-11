@@ -2,6 +2,7 @@ import "server-only";
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 import { DbNotConfiguredError, isConnectionError } from "./db";
+import { MongoNotConfiguredError, MongoNotSetUpError, isMongoConnectionError, isMongoError, isMongoValidationError } from "./mongo";
 
 /** An error whose message is safe to show the user, with the HTTP status to send. */
 export class HttpError extends Error {
@@ -21,6 +22,20 @@ export function describeError(err: unknown, context: string): { status: number; 
     return { status: 400, message: `Invalid ${first?.path.join(".") || "request"}: ${first?.message}` };
   }
   if (err instanceof DbNotConfiguredError) return { status: 503, message: err.message };
+  // MongoDB (room designs). Checked before isConnectionError(), whose message match would also catch these.
+  if (err instanceof MongoNotConfiguredError || err instanceof MongoNotSetUpError) return { status: 503, message: err.message };
+  if (isMongoConnectionError(err)) {
+    console.error(`[${context}] MongoDB unreachable:`, err);
+    return { status: 503, message: "Can't reach MongoDB. Is it running? (see README → MongoDB)" };
+  }
+  if (isMongoValidationError(err)) {
+    // The room_designs $jsonSchema validator rejected the document — MongoDB's version of a CHECK violation.
+    return { status: 422, message: "MongoDB rejected that design: it doesn't match the room_designs schema." };
+  }
+  if (isMongoError(err)) {
+    console.error(`[${context}] MongoDB error:`, err);
+    return { status: 500, message: "Something went wrong in MongoDB." };
+  }
   const pgCode = (err as { code?: string }).code;
   if (pgCode === "42P01") return { status: 503, message: "The database tables don't exist yet. Run: npm run db:setup" };
   if (pgCode === "23514" || pgCode === "23505" || pgCode === "23503") {

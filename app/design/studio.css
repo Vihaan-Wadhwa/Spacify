@@ -148,6 +148,8 @@
 .studio .floor-opt { padding: 7px 10px; border-radius: 7px; border: 1px solid var(--border); font-size: 12px; color: var(--text2); cursor: pointer; transition: all 0.15s; display: flex; align-items: center; gap: 8px; background: none; text-align: left; }
 .studio .floor-opt:hover { color: var(--text); border-color: var(--border2); }
 .studio .floor-opt.active { background: rgba(200, 240, 160, 0.1); color: var(--accent); border-color: rgba(200, 240, 160, 0.3); }
+.studio .chip-options { display: flex; flex-wrap: wrap; gap: 5px; }
+.studio .chip-options .floor-opt { padding: 5px 9px; }
 .studio .floor-preview { width: 18px; height: 18px; border-radius: 3px; flex-shrink: 0; border: 1px solid var(--border); }
 .studio .dp-none { font-size: 12px; color: var(--text3); text-align: center; padding: 20px 0; }
 .studio .range { width: 100%; accent-color: var(--accent); }

@@ -1,5 +1,5 @@
-# Local PostgreSQL for Spacify.  Start: docker compose up -d   Stop: docker compose down
-# Matches the default DATABASE_URL in .env.example. Data survives restarts (the named volume).
+# Local databases for Spacify.  Start: docker compose up -d   Stop: docker compose down
+# Matches the default DATABASE_URL and MONGODB_URI in .env.example. Data survives restarts (the named volumes).
 services:
   postgres:
     image: postgres:16-alpine
@@ -16,5 +16,18 @@ services:
       interval: 5s
       retries: 10
 
+  # Room designs (wall finish, flooring, ceiling, lighting): one document per PostgreSQL room.
+  mongo:
+    image: mongo:7
+    ports:
+      - "27017:27017"
+    volumes:
+      - spacify-mongodata:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 5s
+      retries: 10
+
 volumes:
   spacify-pgdata:
+  spacify-mongodata:

@@ -1,7 +1,6 @@
 import * as THREE from "three";
 import {
   WALLS,
-  flooringColor,
   planBounds,
   roomColor,
   wallCuts,
@@ -265,7 +264,7 @@ export class SpacifyScene {
       const floorRooms = state.rooms.filter((r) => r.floor === floor);
       const y0 = (floor - 1) * FLOOR_SPACING;
       for (const room of floorRooms) {
-        const design = state.designs[room.id] ?? {};
+        const design = state.designs[room.id];
         const pos: Box = {
           x: (room.x - cx) * FT_TO_UNITS,
           z: (room.z - cz) * FT_TO_UNITS,
@@ -279,9 +278,9 @@ export class SpacifyScene {
     }
   }
 
-  private buildRoom(r: Room, pos: Box, y0: number, design: RoomDesign, layers: Layers) {
+  private buildRoom(r: Room, pos: Box, y0: number, design: RoomDesign | undefined, layers: Layers) {
     const colCSS = roomColor(r.name);
-    const floorColor = flooringColor(design.flooring) ?? colCSS;
+    const floorColor = design?.flooring.color ?? colCSS;
 
     // Floor slab
     const floorMesh = new THREE.Mesh(
@@ -319,10 +318,11 @@ export class SpacifyScene {
    * Four walls, open top, each split around its doors and windows (including ones that belong to the room on the other
    * side of a shared wall). A door leaves a gap with a lintel above; a window gets a sill, glass and a header.
    */
-  private buildWalls(r: Room, floorRooms: Room[], center: { x: number; z: number }, y0: number, design: RoomDesign) {
+  private buildWalls(r: Room, floorRooms: Room[], center: { x: number; z: number }, y0: number, design: RoomDesign | undefined) {
     // A chosen wall colour applies to all four sides; otherwise the e/w sides are a touch darker, as before.
-    const wallMat = new THREE.MeshLambertMaterial({ color: design.wallColor ?? 0xfafafa, transparent: true, opacity: 0.9 });
-    const sideMat = design.wallColor ? wallMat : new THREE.MeshLambertMaterial({ color: 0xe8e8e8, transparent: true, opacity: 0.85 });
+    const wallColor = design?.walls.color;
+    const wallMat = new THREE.MeshLambertMaterial({ color: wallColor ?? 0xfafafa, transparent: true, opacity: 0.9 });
+    const sideMat = wallColor ? wallMat : new THREE.MeshLambertMaterial({ color: 0xe8e8e8, transparent: true, opacity: 0.85 });
     const glassMat = new THREE.MeshLambertMaterial({ color: 0x88ccff, transparent: true, opacity: 0.5 });
     const h = r.h;
     const doorTop = Math.min(DOOR_TOP, h - 1);

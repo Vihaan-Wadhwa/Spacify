@@ -1,17 +1,32 @@
 "use client";
 
-import { FLOOR_OPTIONS, WALL_PRESETS, roomColor, type Room, type RoomDesign } from "@/lib/rooms";
+import {
+  DEFAULT_COUNTERTOP,
+  DEFAULT_DESIGN,
+  FLOOR_OPTIONS,
+  KITCHEN_LAYOUTS,
+  KITCHEN_LAYOUT_LABELS,
+  WALL_FINISHES,
+  WALL_FINISH_LABELS,
+  WALL_PRESETS,
+  isKitchen,
+  roomColor,
+  type Room,
+  type RoomDesign,
+} from "@/lib/rooms";
 
 type Props = {
   open: boolean;
   room: Room | null;
-  design: RoomDesign;
+  /** null until something is picked for this room; it's then stored in MongoDB on save. */
+  design: RoomDesign | null;
   onClose: () => void;
-  onChangeDesign: (patch: RoomDesign) => void;
+  onChangeDesign: (patch: Partial<RoomDesign>) => void;
   onChangeHeight: (h: number) => void;
 };
 
 export function DesignPanel({ open, room, design, onClose, onChangeDesign, onChangeHeight }: Props) {
+  const walls = design?.walls ?? DEFAULT_DESIGN.walls;
   return (
     <aside className={`design-panel${open ? " open" : ""}`} aria-label="Room design">
       <div className="panel-head">
@@ -29,16 +44,32 @@ export function DesignPanel({ open, room, design, onClose, onChangeDesign, onCha
             </div>
 
             <div className="dp-section">
+              <h4>Wall Finish</h4>
+              <div className="chip-options" role="group" aria-label="Wall finish">
+                {WALL_FINISHES.map((finish) => (
+                  <button
+                    key={finish}
+                    className={`floor-opt${design?.walls.finish === finish ? " active" : ""}`}
+                    aria-pressed={design?.walls.finish === finish}
+                    onClick={() => onChangeDesign({ walls: { ...walls, finish } })}
+                  >
+                    {WALL_FINISH_LABELS[finish]}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div className="dp-section">
               <h4>Wall Colour</h4>
               <div className="color-grid">
                 {WALL_PRESETS.map((col) => (
                   <button
                     key={col}
-                    className={`color-swatch${design.wallColor === col ? " active" : ""}`}
+                    className={`color-swatch${design?.walls.color === col ? " active" : ""}`}
                     style={{ background: col }}
                     title={col}
                     aria-label={`Wall colour ${col}`}
-                    onClick={() => onChangeDesign({ wallColor: col })}
+                    onClick={() => onChangeDesign({ walls: { ...walls, color: col } })}
                   />
                 ))}
               </div>
@@ -46,8 +77,8 @@ export function DesignPanel({ open, room, design, onClose, onChangeDesign, onCha
                 type="color"
                 className="color-picker"
                 aria-label="Custom wall colour"
-                value={design.wallColor ?? "#f5f0e8"}
-                onChange={(e) => onChangeDesign({ wallColor: e.target.value })}
+                value={walls.color}
+                onChange={(e) => onChangeDesign({ walls: { ...walls, color: e.target.value } })}
               />
             </div>
 
@@ -57,8 +88,8 @@ export function DesignPanel({ open, room, design, onClose, onChangeDesign, onCha
                 {FLOOR_OPTIONS.map((f) => (
                   <button
                     key={f.name}
-                    className={`floor-opt${design.flooring === f.name ? " active" : ""}`}
-                    onClick={() => onChangeDesign({ flooring: f.name })}
+                    className={`floor-opt${design?.flooring.name === f.name ? " active" : ""}`}
+                    onClick={() => onChangeDesign({ flooring: { ...f } })}
                   >
                     <span className="floor-preview" style={{ background: f.color }} />
                     {f.name}
@@ -66,6 +97,24 @@ export function DesignPanel({ open, room, design, onClose, onChangeDesign, onCha
                 ))}
               </div>
             </div>
+
+            {isKitchen(room.name) && (
+              <div className="dp-section">
+                <h4>Kitchen Layout</h4>
+                <div className="chip-options" role="group" aria-label="Kitchen layout">
+                  {KITCHEN_LAYOUTS.map((layout) => (
+                    <button
+                      key={layout}
+                      className={`floor-opt${design?.kitchen?.layout === layout ? " active" : ""}`}
+                      aria-pressed={design?.kitchen?.layout === layout}
+                      onClick={() => onChangeDesign({ kitchen: { layout, countertop: design?.kitchen?.countertop ?? DEFAULT_COUNTERTOP } })}
+                    >
+                      {KITCHEN_LAYOUT_LABELS[layout]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="dp-section">
               <h4>Ceiling Height</h4>

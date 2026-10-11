@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { ProjectInput } from "@/lib/projects";
 import { getCurrentUserId } from "@/lib/server/currentUser";
+import { saveDesignsAfterRooms } from "@/lib/server/designs";
 import { errorResponse } from "@/lib/server/errors";
 import { createProject, listProjects } from "@/lib/server/projects";
 
@@ -14,12 +15,17 @@ export async function GET() {
   }
 }
 
-/** POST /api/projects — create a project with its rooms, in one transaction. Body: { name, floors, rooms }. */
+/**
+ * POST /api/projects — create a project with its rooms in one PostgreSQL transaction, then store the rooms' designs
+ * in MongoDB. Body: { name, floors, rooms, designs? }. If only the MongoDB step fails, the result carries a `warning`.
+ */
 export async function POST(request: Request) {
   try {
     const input = ProjectInput.parse(await request.json().catch(() => null));
     const userId = await getCurrentUserId();
-    return NextResponse.json(await createProject(userId, input), { status: 201 });
+    const result = await createProject(userId, input);
+    const warning = await saveDesignsAfterRooms(userId, result.project.id, result.idMap, input.designs);
+    return NextResponse.json({ ...result, ...(warning && { warning }) }, { status: 201 });
   } catch (err) {
     return errorResponse(err, "POST /api/projects");
   }

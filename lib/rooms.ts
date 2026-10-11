@@ -50,10 +50,45 @@ export const OPENING_SIZE: Record<OpeningKind, { min: number; max: number; initi
   window: { min: 1, max: 12, initial: 4 },
 };
 
+// ─── Room designs (MongoDB `room_designs`, one document per room) ───
+// The same enums are enforced by the collection's $jsonSchema validator (db/mongo-validator.json).
+
+export const WALL_FINISHES = ["paint", "tiles", "marble", "wallpaper", "wood_panel"] as const;
+export const FLOOR_MATERIALS = ["marble", "vitrified", "tiles", "wood", "granite"] as const;
+export const CEILING_TYPES = ["plain", "pop", "gypsum", "wood"] as const;
+export const KITCHEN_LAYOUTS = ["L", "U", "parallel", "island", "straight"] as const;
+
+export type WallFinish = (typeof WALL_FINISHES)[number];
+export type FloorMaterial = (typeof FLOOR_MATERIALS)[number];
+export type CeilingType = (typeof CEILING_TYPES)[number];
+export type KitchenLayout = (typeof KITCHEN_LAYOUTS)[number];
+
+/** A room's finishes. Walls and flooring are always set; the rest only when chosen (kitchen only for kitchens). */
 export type RoomDesign = {
-  wallColor?: string;
-  flooring?: string;
+  walls: { finish: WallFinish; color: string };
+  flooring: { material: FloorMaterial; name: string; color: string };
+  ceiling?: { type: CeilingType };
+  lighting?: { type: string; count: number }[];
+  kitchen?: { layout: KitchenLayout; countertop: string };
 };
+
+export const WALL_FINISH_LABELS: Record<WallFinish, string> = {
+  paint: "Paint",
+  tiles: "Tiles",
+  marble: "Marble",
+  wallpaper: "Wallpaper",
+  wood_panel: "Wood panel",
+};
+
+export const KITCHEN_LAYOUT_LABELS: Record<KitchenLayout, string> = {
+  L: "L",
+  U: "U",
+  parallel: "Parallel",
+  island: "Island",
+  straight: "Straight",
+};
+
+export const isKitchen = (roomType: string) => /kitchen/i.test(roomType);
 
 export type LayerName = "walls" | "floors" | "furniture" | "labels" | "grid";
 export type Layers = Record<LayerName, boolean>;
@@ -110,18 +145,23 @@ export const WALL_PRESETS = [
   "#e8ecf5", "#f5f5e8", "#e8f0e8", "#f2e8e8", "#e8e8f2",
 ];
 
-export const FLOOR_OPTIONS = [
-  { name: "White Marble", color: "#f0eeea" },
-  { name: "Beige Tiles", color: "#d4c9b0" },
-  { name: "Dark Wood", color: "#5c3d1e" },
-  { name: "Light Wood", color: "#c8a46e" },
-  { name: "Grey Granite", color: "#9e9e9e" },
-  { name: "Vitrified", color: "#dde0e3" },
+export const FLOOR_OPTIONS: RoomDesign["flooring"][] = [
+  { material: "marble", name: "White Marble", color: "#f0eeea" },
+  { material: "tiles", name: "Beige Tiles", color: "#d4c9b0" },
+  { material: "wood", name: "Dark Wood", color: "#5c3d1e" },
+  { material: "wood", name: "Light Wood", color: "#c8a46e" },
+  { material: "granite", name: "Grey Granite", color: "#9e9e9e" },
+  { material: "vitrified", name: "Vitrified", color: "#dde0e3" },
 ];
 
-export function flooringColor(name: string | undefined): string | undefined {
-  return FLOOR_OPTIONS.find((f) => f.name === name)?.color;
-}
+/** What a room's design starts from the first time any finish is picked, so the required parts always have a value. */
+export const DEFAULT_DESIGN: RoomDesign = {
+  walls: { finish: "paint", color: WALL_PRESETS[0] },
+  flooring: FLOOR_OPTIONS.find((f) => f.name === "Vitrified")!,
+};
+
+/** Countertop stored with a kitchen layout (the panel only offers the layout). */
+export const DEFAULT_COUNTERTOP = "Black granite";
 
 // ─── Walls and openings ──────────────────────────────────────
 

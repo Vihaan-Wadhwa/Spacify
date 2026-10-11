@@ -64,7 +64,7 @@ type Db = Pool | PoolClient;
 // ─── Access control ──────────────────────────────────────────────────
 
 /** Checks the user's access through the project_access() SQL function; throws 404/403 if it's not enough. */
-async function requireAccess(db: Db, userId: number, projectId: number, need: "view" | "edit" | "owner"): Promise<Access> {
+export async function requireAccess(db: Db, userId: number, projectId: number, need: "view" | "edit" | "owner"): Promise<Access> {
   const { rows } = await db.query<{ access: Access | null }>("SELECT project_access($1, $2) AS access", [userId, projectId]);
   const access = rows[0]?.access ?? null;
   // Same 404 whether the project doesn't exist or isn't yours, so ids of other people's projects don't leak.

@@ -3,7 +3,9 @@ import { notFound } from "next/navigation";
 import { DesignStudio } from "@/components/design/DesignStudio";
 import type { SavedProject } from "@/lib/projects";
 import type { CurrentUser } from "@/lib/auth";
+import type { RoomDesign } from "@/lib/rooms";
 import { getCurrentUser, requireUser } from "@/lib/server/currentUser";
+import { getDesigns } from "@/lib/server/designs";
 import { HttpError, describeError } from "@/lib/server/errors";
 import { parseId } from "@/lib/server/params";
 import { getProject } from "@/lib/server/projects";
@@ -15,7 +17,8 @@ export const metadata: Metadata = {
 
 /**
  * /design              → new, unsaved project (logged in)
- * /design?project=12   → loads saved project 12 from PostgreSQL (on the server, before the page renders; logged in)
+ * /design?project=12   → loads saved project 12 from PostgreSQL and its room designs from MongoDB (on the server,
+ *                        before the page renders; logged in). If MongoDB fails the rooms still load, with default finishes.
  * /design?demo=1       → sample rooms, open to everyone; saving needs a login
  */
 export default async function DesignPage({ searchParams }: PageProps<"/design">) {
@@ -25,7 +28,9 @@ export default async function DesignPage({ searchParams }: PageProps<"/design">)
 
   let user: CurrentUser | null = null;
   let initialProject: SavedProject | null = null;
+  let initialDesigns: Record<number, RoomDesign> = {};
   let loadError: string | null = null;
+  let designsError: string | null = null;
   if (isDemo) {
     // The demo works without a database, so a lookup failure just means "not logged in".
     user = await getCurrentUser().catch(() => null);
@@ -39,8 +44,24 @@ export default async function DesignPage({ searchParams }: PageProps<"/design">)
         if (err instanceof HttpError && (err.status === 404 || err.status === 400)) notFound();
         loadError = describeError(err, "design page").message;
       }
+      if (initialProject) {
+        try {
+          initialDesigns = await getDesigns(signedIn.id, initialProject.id);
+        } catch (err) {
+          designsError = describeError(err, "design page designs").message;
+        }
+      }
     }
   }
 
-  return <DesignStudio demo={isDemo} user={user} initialProject={initialProject} loadError={loadError} />;
+  return (
+    <DesignStudio
+      demo={isDemo}
+      user={user}
+      initialProject={initialProject}
+      initialDesigns={initialDesigns}
+      loadError={loadError}
+      designsError={designsError}
+    />
+  );
 }

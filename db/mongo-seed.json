@@ -1,0 +1,67 @@
+[
+  {
+    "project": "Sample 2BHK",
+    "room_type": "Living Room",
+    "days_ago": 2,
+    "walls": { "finish": "paint", "color": "#f5f0e8" },
+    "flooring": { "material": "marble", "name": "White Marble", "color": "#f0eeea" },
+    "ceiling": { "type": "pop" },
+    "lighting": [{ "type": "cove LED strip", "count": 4 }, { "type": "chandelier", "count": 1 }]
+  },
+  {
+    "project": "Sample 2BHK",
+    "room_type": "Master Bedroom",
+    "days_ago": 10,
+    "walls": { "finish": "wallpaper", "color": "#e8f0f5" },
+    "flooring": { "material": "wood", "name": "Light Wood", "color": "#c8a46e" },
+    "ceiling": { "type": "gypsum" },
+    "lighting": [{ "type": "downlight", "count": 6 }]
+  },
+  {
+    "project": "Sample 2BHK",
+    "room_type": "Kitchen",
+    "days_ago": 1,
+    "walls": { "finish": "tiles", "color": "#f5f5e8" },
+    "flooring": { "material": "vitrified", "name": "Vitrified", "color": "#dde0e3" },
+    "lighting": [{ "type": "under-cabinet LED", "count": 3 }],
+    "kitchen": { "layout": "L", "countertop": "Black granite" }
+  },
+  {
+    "project": "Sample 2BHK",
+    "room_type": "Bedroom 2",
+    "days_ago": 20,
+    "walls": { "finish": "paint", "color": "#e8f5ec" },
+    "flooring": { "material": "wood", "name": "Light Wood", "color": "#c8a46e" }
+  },
+  {
+    "project": "Sample 2BHK",
+    "room_type": "Bathroom",
+    "days_ago": 30,
+    "walls": { "finish": "tiles", "color": "#e8ecf5" },
+    "flooring": { "material": "tiles", "name": "Beige Tiles", "color": "#d4c9b0" }
+  },
+  {
+    "project": "Rahul's Villa",
+    "room_type": "Living Room",
+    "days_ago": 5,
+    "walls": { "finish": "marble", "color": "#f2e8e8" },
+    "flooring": { "material": "marble", "name": "White Marble", "color": "#f0eeea" },
+    "ceiling": { "type": "pop" }
+  },
+  {
+    "project": "Rahul's Villa",
+    "room_type": "Kitchen",
+    "days_ago": 3,
+    "walls": { "finish": "tiles", "color": "#f5ebe8" },
+    "flooring": { "material": "granite", "name": "Grey Granite", "color": "#9e9e9e" },
+    "kitchen": { "layout": "island", "countertop": "Quartz" }
+  },
+  {
+    "project": "Rahul's Villa",
+    "room_type": "Master Bedroom",
+    "days_ago": 12,
+    "walls": { "finish": "wood_panel", "color": "#f0e8f5" },
+    "flooring": { "material": "wood", "name": "Dark Wood", "color": "#5c3d1e" },
+    "ceiling": { "type": "wood" }
+  }
+]

@@ -1,0 +1,66 @@
+{
+  "$jsonSchema": {
+    "title": "room_designs: one document per PostgreSQL room (rooms.id)",
+    "bsonType": "object",
+    "required": ["room_id", "project_id", "room_type", "walls", "flooring", "updated_by", "updated_at"],
+    "additionalProperties": false,
+    "properties": {
+      "_id": { "bsonType": "objectId" },
+      "room_id": { "bsonType": "int", "minimum": 1, "description": "PostgreSQL rooms.id (unique index)" },
+      "project_id": { "bsonType": "int", "minimum": 1, "description": "PostgreSQL projects.id (index)" },
+      "room_type": { "bsonType": "string", "minLength": 1, "maxLength": 50, "description": "copy of rooms.room_type" },
+      "walls": {
+        "bsonType": "object",
+        "required": ["finish", "color"],
+        "additionalProperties": false,
+        "properties": {
+          "finish": { "enum": ["paint", "tiles", "marble", "wallpaper", "wood_panel"] },
+          "color": { "bsonType": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+        }
+      },
+      "flooring": {
+        "bsonType": "object",
+        "required": ["material", "name", "color"],
+        "additionalProperties": false,
+        "properties": {
+          "material": { "enum": ["marble", "vitrified", "tiles", "wood", "granite"] },
+          "name": { "bsonType": "string", "minLength": 1, "maxLength": 50 },
+          "color": { "bsonType": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+        }
+      },
+      "ceiling": {
+        "bsonType": "object",
+        "required": ["type"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "enum": ["plain", "pop", "gypsum", "wood"] }
+        }
+      },
+      "lighting": {
+        "bsonType": "array",
+        "maxItems": 10,
+        "items": {
+          "bsonType": "object",
+          "required": ["type", "count"],
+          "additionalProperties": false,
+          "properties": {
+            "type": { "bsonType": "string", "minLength": 1, "maxLength": 40 },
+            "count": { "bsonType": "int", "minimum": 1, "maximum": 50 }
+          }
+        }
+      },
+      "kitchen": {
+        "bsonType": "object",
+        "required": ["layout", "countertop"],
+        "additionalProperties": false,
+        "description": "kitchens only",
+        "properties": {
+          "layout": { "enum": ["L", "U", "parallel", "island", "straight"] },
+          "countertop": { "bsonType": "string", "minLength": 1, "maxLength": 50 }
+        }
+      },
+      "updated_by": { "bsonType": "int", "minimum": 1, "description": "PostgreSQL users.id" },
+      "updated_at": { "bsonType": "date" }
+    }
+  }
+}
