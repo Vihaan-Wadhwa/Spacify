@@ -4,11 +4,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTheme } from "@/components/ThemeProvider";
 import type { CurrentUser } from "@/lib/auth";
 import { downloadDataUrl } from "@/lib/browser";
+import { DEMO_ROOMS } from "@/lib/demoPlan";
 import type { Access, SaveResult, SavedProject } from "@/lib/projects";
 import {
   DEFAULT_DESIGN,
   DEFAULT_LAYERS,
-  DEMO_ROOMS,
   MAX_FLOORS,
   ROOM_DEFAULTS,
   defaultOpenings,

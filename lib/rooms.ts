@@ -38,8 +38,11 @@ export type Room = {
   openings: Opening[];
 };
 
-/** A room before it has a place on the plan or any doors (from a sketch, or picked from the list). */
-export type RoomDraft = Pick<Room, "name" | "w" | "l" | "h" | "floor">;
+/**
+ * A room before it has any doors (from a sketch, or picked from the list).
+ * `x`/`z` are set when the sketch showed where the room is; otherwise placeRooms() finds it a spot.
+ */
+export type RoomDraft = Pick<Room, "name" | "w" | "l" | "h" | "floor"> & Partial<Pick<Room, "x" | "z">>;
 
 /** Width and length limits the editor keeps rooms within, in feet. */
 export const ROOM_SIZE = { min: 4, max: 40 };
@@ -115,6 +118,9 @@ export const ROOM_COLORS: Record<string, string> = {
   Store: "#d0d0d0",
   Staircase: "#ffaa80",
   "Dining Room": "#ffc8a0",
+  "Drawing Room": "#9ec5ff",
+  Passage: "#bfc4cc",
+  Other: "#d8c8b0",
 };
 const DEFAULT_ROOM_COLOR = "#cccccc";
 
@@ -125,6 +131,7 @@ export function roomColor(name: string): string {
 /** Default [width, length] in feet when a room is added by hand. */
 export const ROOM_DEFAULTS: Record<string, [number, number]> = {
   "Living Room": [18, 14],
+  "Drawing Room": [18, 14],
   "Master Bedroom": [14, 13],
   "Bedroom 2": [12, 12],
   "Bedroom 3": [12, 11],
@@ -137,8 +144,12 @@ export const ROOM_DEFAULTS: Record<string, [number, number]> = {
   Balcony: [10, 5],
   Store: [6, 5],
   Staircase: [8, 8],
+  // Anything else (office, gaming room, gym, guest room…): the user or the sketch gives it its own name.
+  Other: [10, 10],
 };
 export const ROOM_TYPES = Object.keys(ROOM_DEFAULTS);
+/** The room type whose name is chosen by the user. */
+export const OTHER_ROOM = "Other";
 
 export const WALL_PRESETS = [
   "#f5f0e8", "#e8f0f5", "#f0e8f5", "#e8f5ec", "#f5ebe8",
@@ -252,12 +263,20 @@ export function freeSpot(rooms: Room[], floor: number): { x: number; z: number }
 }
 
 /**
- * Gives rooms that have no position yet (a sketch's rooms) a place and their default door and window.
- * Each floor is packed in rows, left to right with walls touching, wrapping when a row passes 60 ft.
+ * Gives a sketch's rooms their default door and window, and a place if the sketch didn't give them one.
+ * Rooms without a position are packed in rows below the floor's positioned rooms, left to right with walls touching,
+ * wrapping when a row passes 60 ft.
  */
 export function placeRooms(drafts: RoomDraft[]): Omit<Room, "id">[] {
   const rows = new Map<number, { x: number; z: number; rowL: number }>();
+  for (const r of drafts) {
+    if (r.x === undefined || r.z === undefined) continue;
+    const row = rows.get(r.floor) ?? { x: 0, z: 0, rowL: 0 };
+    row.z = Math.max(row.z, r.z + r.l);
+    rows.set(r.floor, row);
+  }
   return drafts.map((r) => {
+    if (r.x !== undefined && r.z !== undefined) return { ...r, x: r.x, z: r.z, openings: defaultOpenings(r.w) };
     const row = rows.get(r.floor) ?? { x: 0, z: 0, rowL: 0 };
     if (row.x + r.w > 60 && row.x > 0) {
       row.z += row.rowL;
@@ -290,18 +309,6 @@ export function overlappingIds(rooms: Room[]): Set<number> {
   }
   return ids;
 }
-
-/** Sample rooms loaded by /design?demo=1: a 2BHK with shared walls. */
-export const DEMO_ROOMS: Omit<Room, "id">[] = (
-  [
-    { name: "Living Room", w: 18, l: 14, x: 0, z: 0 },
-    { name: "Dining Room", w: 14, l: 12, x: 18, z: 0 },
-    { name: "Kitchen", w: 12, l: 10, x: 32, z: 0 },
-    { name: "Master Bedroom", w: 14, l: 13, x: 0, z: 14 },
-    { name: "Bathroom", w: 8, l: 6, x: 14, z: 14 },
-    { name: "Bedroom 2", w: 12, l: 12, x: 22, z: 14 },
-  ] as const
-).map((r) => ({ ...r, h: 10, floor: 1, openings: defaultOpenings(r.w) }));
 
 export function totalArea(rooms: Room[]): number {
   return rooms.reduce((sum, r) => sum + r.w * r.l, 0);

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MAX_FLOORS, ROOM_SIZE, ROOM_TYPES, roomColor, type Room } from "@/lib/rooms";
+import { MAX_FLOORS, OTHER_ROOM, ROOM_SIZE, ROOM_TYPES, roomColor, type Room } from "@/lib/rooms";
 
 type Props = {
   /** null = default: CSS shows it on desktop and hides it on phones */
@@ -41,6 +41,19 @@ export function RoomPanel({
 }: Props) {
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [newType, setNewType] = useState(ROOM_TYPES[0]);
+  // For "Other": what the room is (gaming room, office…). Blank adds it as "Other".
+  const [otherName, setOtherName] = useState("");
+
+  function addRoom() {
+    if (newType !== OTHER_ROOM) return onAddRoom(newType);
+    onAddRoom(otherName.trim().slice(0, 50) || OTHER_ROOM);
+    setOtherName("");
+  }
+
+  function commitName(room: Room, raw: string) {
+    const name = raw.trim().slice(0, 50);
+    if (name && name !== room.name) onUpdateRoom(room.id, { name });
+  }
 
   function toggleExpand(id: number) {
     setCollapsed((prev) => {
@@ -77,6 +90,18 @@ export function RoomPanel({
               </button>
               {expanded && (
                 <div className="room-dims">
+                  <div className="dim-input name">
+                    <label htmlFor={`room-${r.id}-name`}>Name</label>
+                    <input
+                      id={`room-${r.id}-name`}
+                      key={`name-${r.name}`}
+                      type="text"
+                      defaultValue={r.name}
+                      maxLength={50}
+                      onBlur={(e) => commitName(r, e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                    />
+                  </div>
                   {DIMENSIONS.map((d) => (
                     <div className="dim-input" key={d.key}>
                       <label htmlFor={`room-${r.id}-${d.key}`}>{d.label}</label>
@@ -116,11 +141,23 @@ export function RoomPanel({
         <div className="add-room-row">
           <select ref={addSelectRef} className="room-type-select" value={newType} onChange={(e) => setNewType(e.target.value)} aria-label="Room type">
             {ROOM_TYPES.map((t) => (
-              <option key={t}>{t}</option>
+              <option key={t} value={t}>{t === OTHER_ROOM ? "Other (name it)…" : t}</option>
             ))}
           </select>
-          <button className="add-btn" onClick={() => onAddRoom(newType)}>+ Add room</button>
+          <button className="add-btn" onClick={addRoom}>+ Add room</button>
         </div>
+        {newType === OTHER_ROOM && (
+          <input
+            className="room-type-select other-name"
+            type="text"
+            value={otherName}
+            maxLength={50}
+            placeholder="Room name, e.g. Gaming Room, Office"
+            aria-label="Name for the other room"
+            onChange={(e) => setOtherName(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && addRoom()}
+          />
+        )}
         <div className="floors-row">
           <span>Floors:</span>
           {Array.from({ length: MAX_FLOORS }, (_, i) => i + 1).map((n) => (

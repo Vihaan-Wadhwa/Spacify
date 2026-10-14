@@ -1,11 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
+import { PlanSketch } from "@/components/PlanSketch";
 
 const ABBREVIATIONS = [
-  "MB → Master Bedroom", "LR → Living Room", "K → Kitchen", "B1, B2 → Bedrooms",
-  "Bath → Bathroom", "WIC → Walk-in Closet", "PR → Pooja Room", "St → Study",
-  "Bal → Balcony", "Store → Store Room", "Stair → Staircase", "DR → Dining Room",
+  "MB → Master Bedroom", "B2, B3 → Bedrooms", "Drg → Drawing Room", "LR → Living Room",
+  "Din → Dining Room", "K → Kitchen", "Bath → Bathroom", "WIC → Walk-in Closet",
+  "PR, Puja → Pooja Room", "St → Study", "Bal → Balcony", "Store → Store Room",
+  "Stair → Staircase", "O, Other → any other room",
 ];
 
 const TIPS = [
@@ -14,15 +16,6 @@ const TIPS = [
   "One room per enclosed area — don't overlap",
   "For multi-floor homes, draw each floor separately and note Floor 1, Floor 2",
   "Digital sketches (iPad, tablet) work even better than paper",
-];
-
-const SKETCH_ROOMS = [
-  { x: 10, y: 10, w: 180, h: 130, fill: "rgba(200,240,160,0.05)", label: "LR", dims: "18×13", tx: 100, ty: 72 },
-  { x: 190, y: 10, w: 200, h: 140, fill: "rgba(200,160,240,0.05)", label: "MB", dims: "14×13", tx: 290, ty: 77 },
-  { x: 10, y: 140, w: 110, h: 130, fill: "rgba(160,240,200,0.05)", label: "K", dims: "12×10", tx: 65, ty: 202 },
-  { x: 120, y: 140, w: 140, h: 130, fill: "rgba(240,200,160,0.05)", label: "B1", dims: "12×12", tx: 190, ty: 202 },
-  { x: 260, y: 150, w: 80, h: 70, fill: "rgba(160,200,240,0.05)", label: "Bath", tx: 300, ty: 187 },
-  { x: 260, y: 220, w: 80, h: 50, fill: "none", label: "Store", tx: 300, ty: 248 },
 ];
 
 type Props = { onClose: () => void; onUpload: () => void };
@@ -52,10 +45,15 @@ export function TutorialModal({ onClose, onUpload }: Props) {
           <div className="abbr-grid">
             {ABBREVIATIONS.map((a) => <div key={a}>{a}</div>)}
           </div>
+          <p className="tut-note">
+            A room that isn&apos;t on this list, like a home office, gaming room or gym? Write its name, such as{" "}
+            <span className="code-inline">Gaming Room</span>, or mark it <span className="code-inline">O Office</span>. A room marked only{" "}
+            <span className="code-inline">O</span> is added as &ldquo;Other&rdquo;, and you can rename it.
+          </p>
         </Step>
         <Step n={4} title="Add dimensions (optional)">
           <p>
-            Write room sizes next to labels like <span className="code-inline">MB 14×13</span>. If you skip this, the AI will estimate based on proportions.
+            Write room sizes under labels like <span className="code-inline">MB 14×13</span>: width (left to right) × length (top to bottom), in feet. If you skip this, the AI will estimate based on proportions.
           </p>
         </Step>
         <Step n={5} title="Take a clear photo">
@@ -63,23 +61,8 @@ export function TutorialModal({ onClose, onUpload }: Props) {
         </Step>
 
         <div className="example-sketch">
-          <p>Example sketch</p>
-          <svg viewBox="0 0 400 280" style={{ width: "100%", fontFamily: "monospace" }} xmlns="http://www.w3.org/2000/svg">
-            <rect x="10" y="10" width="380" height="260" fill="none" stroke="currentColor" strokeWidth="3" opacity="0.4" />
-            {SKETCH_ROOMS.map((r) => (
-              <g key={r.label}>
-                <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={r.fill} stroke="currentColor" strokeWidth="1.5" opacity="0.3" />
-                <text x={r.tx} y={r.ty} textAnchor="middle" fontSize={r.dims ? 13 : 11} fill="currentColor" opacity="0.7">{r.label}</text>
-                {r.dims && <text x={r.tx} y={r.ty + 16} textAnchor="middle" fontSize="10" fill="currentColor" opacity="0.4">{r.dims}</text>}
-              </g>
-            ))}
-            <path d="M100 140 Q115 140 115 125" stroke="currentColor" strokeWidth="1" strokeDasharray="3 2" fill="none" opacity="0.4" />
-            <path d="M190 140 Q190 155 205 155" stroke="currentColor" strokeWidth="1" strokeDasharray="3 2" fill="none" opacity="0.4" />
-            <line x1="10" y1="4" x2="390" y2="4" stroke="currentColor" strokeWidth="0.5" opacity="0.25" />
-            <text x="200" y="3" textAnchor="middle" fontSize="8" fill="currentColor" opacity="0.35">40 ft</text>
-            <line x1="4" y1="10" x2="4" y2="270" stroke="currentColor" strokeWidth="0.5" opacity="0.25" />
-            <text x="2" y="145" textAnchor="middle" fontSize="8" fill="currentColor" opacity="0.35" transform="rotate(-90,2,145)">30 ft</text>
-          </svg>
+          <p>Example sketch: a 3BHK</p>
+          <PlanSketch variant="sketch" style={{ width: "100%", fontFamily: "monospace" }} />
         </div>
 
         <div className="tips">

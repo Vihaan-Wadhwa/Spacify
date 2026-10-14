@@ -61,6 +61,7 @@
 .studio .dim-input label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text3); }
 .studio .dim-input input, .studio .dim-input select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 5px 7px; font-size: 12px; color: var(--text); outline: none; width: 100%; transition: border-color 0.2s; }
 .studio .dim-input select { padding: 5px 4px; }
+.studio .dim-input.name { grid-column: 1 / -1; }
 .studio .dim-input input:focus, .studio .dim-input select:focus { border-color: rgba(200, 240, 160, 0.4); }
 .studio .room-actions { display: flex; gap: 4px; padding: 0 12px 10px; }
 .studio .del-btn { font-size: 11px; color: var(--text3); background: none; border: none; cursor: pointer; padding: 2px 6px; border-radius: 4px; transition: color var(--tr); }
@@ -73,6 +74,8 @@
 .studio .floors-row { display: flex; gap: 6px; align-items: center; margin-bottom: 8px; }
 .studio .floors-row > span { font-size: 11px; color: var(--text3); }
 .studio .room-type-select { flex: 1; min-width: 100px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; color: var(--text); outline: none; }
+.studio .room-type-select.other-name { display: block; width: 100%; margin-bottom: 8px; }
+.studio .room-type-select.other-name:focus { border-color: rgba(200, 240, 160, 0.4); }
 .studio .add-btn { padding: 7px 12px; border-radius: 6px; background: var(--accent); color: var(--accent-dark); font-size: 12px; font-weight: 500; border: none; cursor: pointer; white-space: nowrap; transition: opacity var(--tr); }
 .studio .add-btn:hover { opacity: 0.85; }
 .studio .add-btn.block { width: 100%; margin-bottom: 6px; border-radius: 8px; padding: 8px; }
@@ -229,6 +232,7 @@
 .studio .code-inline { font-family: monospace; background: var(--bg3); padding: 1px 5px; border-radius: 3px; }
 .studio .abbr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 10px; }
 .studio .abbr-grid div { font-size: 11px; background: var(--bg3); border: 1px solid var(--border); border-radius: 6px; padding: 5px 9px; color: var(--text2); font-family: monospace; }
+.studio .tut-note { margin-top: 10px; font-size: 12px; }
 .studio .example-sketch { border: 1px solid var(--border); border-radius: 12px; padding: 20px; background: var(--bg); margin-bottom: 24px; color: var(--text); }
 .studio .example-sketch p { font-size: 11px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 14px; }
 .studio .tips { background: rgba(200, 240, 160, 0.05); border: 1px solid rgba(200, 240, 160, 0.15); border-radius: 10px; padding: 14px 16px; margin-bottom: 24px; }

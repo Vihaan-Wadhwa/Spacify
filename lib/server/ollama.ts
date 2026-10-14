@@ -19,20 +19,32 @@ const SKETCH_PROMPT = `You are reading a floor plan sketch (hand-drawn or digita
 Find every enclosed, labelled room and return them as JSON matching the given schema.
 
 For each room:
+- "label": the text written in the room, exactly as written (e.g. "MB").
 - "name": the room's full name. Expand short labels:
-  MB → Master Bedroom, LR → Living Room, K → Kitchen, DR → Dining Room,
-  B1 → Bedroom 2, B2 → Bedroom 3, Bath or T → Bathroom, WIC → Walk-in Closet,
-  PR → Pooja Room, St → Study, Bal → Balcony, Store → Store, Stair → Staircase.
-  If a label is unreadable, use the closest room type from that list.
-- "w" and "l": width and length in FEET.
-  If dimensions are written next to the label (e.g. "14x13" or "14'×13'"), copy them exactly.
-  Otherwise estimate from the room's size relative to the other rooms and any overall plot dimensions drawn on the sketch.
-  Typical sizes: bedrooms 10–15 ft, kitchen 8–12 ft, bathroom 5–8 ft.
+  MB → Master Bedroom, B2 → Bedroom 2, B3 → Bedroom 3 (if bedrooms are numbered from B1, B1 → Bedroom 2 and B2 → Bedroom 3),
+  Drg or Drawing → Drawing Room, LR → Living Room, Din or DR → Dining Room, K → Kitchen,
+  Bath, T or Toilet → Bathroom, WIC → Walk-in Closet, PR, Puja or Pooja → Pooja Room, St → Study,
+  Bal → Balcony, Store → Store, Stair → Staircase.
+  Any other room (an office, gaming room, gym, guest room, library, laundry, passage…): use the name written on the sketch,
+  in Title Case, without a leading "O" or "Other" ("O Office" → "Office", "Gaming Room" → "Gaming Room").
+  If the label is only "O" or "Other", the name is "Other".
+  If a label is unreadable, use the closest room type from these lists.
+- "w" and "l": the dimensions written in the room, in FEET, in the order written ("14x13" or "14'×13'" → w 14, l 13).
+  If no dimensions are written in that room, use 0 for both. Do not guess.
+- "label_point_2d": [x, y], the pixel position of the centre of the room's label text.
+- "bbox_2d": [x1, y1, x2, y2], the pixel coordinates of the room's walls: top-left and bottom-right corners.
+  Rooms can sit side by side or be stacked one above another; follow the wall lines you can see.
 - "floor": 1 unless the sketch marks a group of rooms as Floor 2 or Floor 3.
 
 Include each room exactly once. Do not invent rooms that are not drawn. Do not include the outer plot boundary as a room.`;
 
-/** JSON schema passed to Ollama's `format` option, so the model can only produce this shape. */
+const pixels = (n: number) => ({ type: "array", items: { type: "number" }, minItems: n, maxItems: n });
+
+/**
+ * JSON schema passed to Ollama's `format` option, so the model can only produce this shape.
+ * label_point_2d / bbox_2d use Qwen2.5-VL's own grounding format (pixel coordinates), which it was trained to output;
+ * lib/server/sketchLayout.ts turns them into positions in feet.
+ */
 const ROOMS_SCHEMA = {
   type: "object",
   properties: {
@@ -41,12 +53,15 @@ const ROOMS_SCHEMA = {
       items: {
         type: "object",
         properties: {
+          label: { type: "string" },
           name: { type: "string" },
           w: { type: "number" },
           l: { type: "number" },
           floor: { type: "integer" },
+          label_point_2d: pixels(2),
+          bbox_2d: pixels(4),
         },
-        required: ["name", "w", "l", "floor"],
+        required: ["label", "name", "w", "l", "floor", "label_point_2d", "bbox_2d"],
       },
     },
   },

@@ -25,7 +25,8 @@ Then log in with a test account (from `db/seed.sql`) or create your own at `/reg
 - `/login`, `/register` — accounts
 - `/projects` — your saved projects (and ones shared with you); needs a login
 - `/design` — the 3D builder; **Save** (or Ctrl+S) stores the project, and the URL becomes `/design?project=<id>`; needs a login
-- `/design?demo=1` — sample rooms, open to everyone; saving asks you to log in
+- `/design?demo=1` — a sample 3BHK (drawing and dining rooms, kitchen, 3 bedrooms, 3 bathrooms, walk-in closet, pooja room, store, passage, balconies), open to everyone; saving asks you to log in. The same plan is the tutorial's example sketch and the landing-page preview (`lib/demoPlan.ts`)
+- Rooms that aren't one of the built-in types (an office, gaming room, gym…) are **Other** rooms: pick "Other (name it)…" when adding a room, rename any room in its card, or write the room's name (or `O` / `O Office`) on a sketch
 
 Without a database, the landing page and the demo still work; logging in and saving don't. Without MongoDB, projects still load and save, but wall finishes and flooring don't (the app says so).
 
@@ -173,7 +174,13 @@ If something's wrong, the upload screen tells you what: Ollama not running, mode
 | `N8N_SKETCH_WEBHOOK_URL` | — | only used when `SKETCH_PROVIDER=n8n` |
 | `N8N_CHAT_WEBHOOK_URL` | — | AI assistant; without it, built-in canned answers |
 
-All of these are read on the server only. How it works: `lib/server/ollama.ts` sends the image with a prompt and a JSON schema (Ollama's structured output), so the model can only answer in the `{ rooms: [...] }` shape; `lib/server/sketch.ts` then validates and clamps every room with zod before it reaches the 3D builder.
+All of these are read on the server only. How it works: `lib/server/ollama.ts` sends the image with a prompt and a JSON schema (Ollama's structured output), so the model can only answer in the `{ rooms: [...] }` shape. For each room the model gives its name, any dimensions written in it, and where it is on the image: the centre of its label and the box around its walls, in Qwen2.5-VL's own `point_2d` / `bbox_2d` pixel format. `lib/server/sketch.ts` validates and clamps every room with zod, then `lib/server/sketchLayout.ts` turns pixels into a floor plan in feet:
+
+- **Scale** comes from rooms with written dimensions (feet per pixel). Sketches aren't drawn to scale, so written dimensions always win over drawn sizes; a room without them is sized from its drawn box, or a typical size for its type.
+- **Arrangement** comes mainly from label positions, which the model reads more reliably than wall outlines. A box is only used if it contains its own label and no other room's. For each pair of rooms, the sketch decides whether they sit side by side or one above the other.
+- **Walls meet:** rooms are pushed together so neighbours share a wall (gaps under 3 ft count as sketching error; a bigger one, like a courtyard, is kept), rooms stacked in a column line up, and nothing overlaps. Each floor starts at 0,0.
+
+If the model gives no positions (the n8n workflow, or an older model), rooms are packed in rows as before. Either way you can fine-tune the result in the Floor Plan tab.
 
 ## Project structure
 
@@ -200,6 +207,7 @@ scripts/db-setup.mjs    npm run db:setup / db:reset (PostgreSQL + MongoDB)
 scripts/check-consistency.mjs  npm run db:check: orphaned designs, rooms without one
 components/
   ThemeProvider.tsx, ThemeToggleButton.tsx, UserMenu.tsx (name → My projects / Log out)
+  PlanSketch.tsx        the sample 3BHK as an SVG (tutorial example sketch, landing preview)
   auth/                 AuthPage (frame), AuthForm (login + register form)
   landing/              Reveal (scroll fade-in), StartForm
   projects/ProjectCard  one saved project, with delete
@@ -216,6 +224,7 @@ components/
     Topbar.tsx
 lib/
   rooms.ts              Room, opening and design types, colours, defaults, walls, placement
+  demoPlan.ts           the sample 3BHK: rooms, doors and windows, sketch labels
   projects.ts           project types + zod validation shared by browser and API
   auth.ts               account validation (zod), safe ?next= redirects, cookie name
   scene/SpacifyScene.ts the Three.js scene (orbit, picking, walkthrough, export)
@@ -229,7 +238,8 @@ lib/
     auth.ts             register, login, logout: bcrypt + sessions SQL
     currentUser.ts      who's signed in: getCurrentUser(), getCurrentUserId(), requireUser()
     errors.ts           turns DB/validation errors into clear messages
-    ollama.ts, sketch.ts, chat.ts, http.ts
+    ollama.ts, sketch.ts  sketch → rooms (local model, validation); sketchLayout.ts places them
+    chat.ts, http.ts
 ```
 
 React owns the state; `SpacifyScene` only draws it. `DesignStudio` passes rooms, floors, layers, per-room designs and the selection down to `<ThreeCanvas />`, which pushes them into the scene.
