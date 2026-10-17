@@ -9,9 +9,14 @@
     "lint": "eslint",
     "db:setup": "node scripts/db-setup.mjs",
     "db:reset": "node scripts/db-setup.mjs --reset",
-    "db:check": "node scripts/check-consistency.mjs"
+    "db:check": "node scripts/check-consistency.mjs",
+    "ai:setup": "node scripts/ai-setup.mjs",
+    "plans:eval": "node --no-warnings scripts/plan-eval.mjs",
+    "notes:eval": "node --no-warnings scripts/notes-eval.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/anek-latin": "^5.3.0",
+    "@fontsource-variable/martian-mono": "^5.3.0",
     "bcryptjs": "^3.0.3",
     "mongodb": "^6.21.0",
     "next": "16.3.6",

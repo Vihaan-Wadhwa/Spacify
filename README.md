@@ -91,6 +91,7 @@ Login is our own, using the `users` and `sessions` tables (no auth library), so 
 | GET / POST | `/api/rooms` | view / edit | List rooms (`?projectId=`) or add one |
 | GET | `/api/design?projectId=` | view | The project's room designs from MongoDB, keyed by room id |
 | PUT | `/api/design` | edit | `{ projectId, roomId, design }` → upsert one room's design |
+| POST | `/api/plans` | — | `{ homeType, bhk, floors, extras, width, depth, facing, setbacks, vastu }` → the best 3–5 laid-out plan options for the plot |
 
 ## Room designs (MongoDB)
 
@@ -173,6 +174,8 @@ If something's wrong, the upload screen tells you what: Ollama not running, mode
 | `OLLAMA_VISION_MODEL` | `qwen2.5vl:7b` | any Ollama vision model |
 | `N8N_SKETCH_WEBHOOK_URL` | — | only used when `SKETCH_PROVIDER=n8n` |
 | `N8N_CHAT_WEBHOOK_URL` | — | AI assistant; without it, built-in canned answers |
+| `OLLAMA_PLAN_MODEL` | `qwen2.5:3b` | text model that suggests plan arrangements on `/start` (optional) |
+| `PLAN_AI_TIMEOUT_MS` | `120000` | how long `/start` waits for those suggestions |
 
 All of these are read on the server only. How it works: `lib/server/ollama.ts` sends the image with a prompt and a JSON schema (Ollama's structured output), so the model can only answer in the `{ rooms: [...] }` shape. For each room the model gives its name, any dimensions written in it, and where it is on the image: the centre of its label and the box around its walls, in Qwen2.5-VL's own `point_2d` / `bbox_2d` pixel format. `lib/server/sketch.ts` validates and clamps every room with zod, then `lib/server/sketchLayout.ts` turns pixels into a floor plan in feet:
 
@@ -181,6 +184,32 @@ All of these are read on the server only. How it works: `lib/server/ollama.ts` s
 - **Walls meet:** rooms are pushed together so neighbours share a wall (gaps under 3 ft count as sketching error; a bigger one, like a courtyard, is kept), rooms stacked in a column line up, and nothing overlaps. Each floor starts at 0,0.
 
 If the model gives no positions (the n8n workflow, or an older model), rooms are packed in rows as before. Either way you can fine-tune the result in the Floor Plan tab.
+
+## Plan options on /start (free, runs locally)
+
+`/start` asks for the home (type, BHK, extra rooms), the plot (width along the road, depth, which side the road is on, floors, setbacks, Vastu) and, optionally, anything else in the visitor's own words ("my parents can't climb stairs, we have a car"). It shows the best 3–5 layouts.
+
+- `lib/planRules.ts` is the rulebook: what makes an Indian home plan good or bad, as checks on a drawn plan. Hard rules (never two bathrooms side by side, no bathroom against the kitchen or pooja room, every bedroom reachable without walking through another, the living room at the road, no long thin rooms, balconies on an outside wall) and soft ones (kitchen beside dining, attached bathrooms, daylight, quiet bedrooms, plumbing stacked between floors).
+- `lib/planner.ts` does the drawing, with no AI and no network. An arrangement says which rooms go in which band across the plot, front to back, and how people move through it (a passage across, a corridor down one side, or neither). Each band is laid by search: rooms are grouped into columns (a bedroom with its bathroom tucked into one end beside a dressing area, the kitchen with its store), every grouping is drawn and checked against the rulebook, and the cleanest wins. Rooms never overlap and always fit the plot; on big plots they grow and the house takes only the land it needs. Each layout is scored, and a hard rule break costs a sixth of the score.
+- `lib/planNotes.ts` reads the visitor's words into wishes (ground-floor bedroom for elders, open kitchen, parking, study, big hall, quiet bedrooms, kitchen by the entrance, attached bathrooms, utility, Vastu or not), including common Hindi and South Indian words, and lists what can't be drawn (a pool, a lift). Wishes add rooms (parking, utility, study, bathrooms) and count in the score.
+- `lib/server/planAi.ts` adds a local model's ideas when Ollama is running. A 3B model is kept on rails: it reads a written guide (`lib/server/skills/floor-planning.md`, the same rulebook plus a plot-shape playbook, edge cases and good/bad examples); it only decides front/middle/back per room plus circulation and mirroring (its answer's schema has one slot per room, so it can't skip or invent one), with the code ordering rooms inside a band; it writes four reasoning lines first; the code hands it the facts (plot shape, band capacity, which corner is which); each idea is drawn, checked, and sent back once with its rule breaks and a concrete fix. Its ideas compete with the rule templates on the same score. Without Ollama the rule-based options still come back.
+
+```bash
+ollama pull qwen2.5:3b   # ~2 GB; fine on 8 GB RAM. qwen2.5:7b suggests better layouts with 16 GB.
+npm run ai:setup         # optional: bakes the guide into a "spacify-planner" model (then OLLAMA_PLAN_MODEL=spacify-planner)
+```
+
+Test benches (run them after changing the rules, the planner, the guide or the prompts):
+
+```bash
+npm run plans:eval                 # 25 briefs (flats, houses, villas, narrow, shallow, tiny, G+2, notes): hard faults in the top plan
+npm run plans:eval -- --ai         # the same with the local model: its ideas' faults before and after review, timing
+npm run plans:eval -- --draw out   # writes every option as an SVG sheet to look at
+npm run notes:eval -- --ai         # how well people's own words are read, by keywords and by the model
+npm run notes:eval -- --held-out --ai   # sentences never used for tuning
+```
+
+Picking an option and pressing **Continue with this plan** opens the studio with those rooms (after logging in if needed); nothing is saved until **Save**.
 
 ## Project structure
 
