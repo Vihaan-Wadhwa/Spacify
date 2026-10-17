@@ -1,15 +1,22 @@
-import { DEMO_ROOMS } from "@/lib/rooms";
+import { DEMO_ROOMS } from "@/lib/demoPlan";
 
 // The demo house (the one /design?demo=1 opens) drawn three ways: as a hand sketch, as the to-scale plan,
 // and as a cut-away axonometric. All three come from the same rooms, so they always agree.
 
 const SHORT: Record<string, string> = {
   "Living Room": "LR",
-  "Dining Room": "DR",
+  "Drawing Room": "Drg",
+  "Dining Room": "Din",
   Kitchen: "K",
   "Master Bedroom": "MB",
+  "Bedroom 2": "B2",
+  "Bedroom 3": "B3",
   Bathroom: "T",
-  "Bedroom 2": "B1",
+  "Walk-in Closet": "WIC",
+  "Pooja Room": "PR",
+  Balcony: "Bal",
+  Store: "St",
+  Passage: "",
 };
 
 const W = Math.max(...DEMO_ROOMS.map((r) => r.x + r.w));
@@ -43,14 +50,14 @@ export function SketchDrawing() {
   const rows: number[] = [];
   for (let g = -pad; g <= L + pad; g += 2) rows.push(g);
   return (
-    <svg className="lp-drawing lp-sketch" viewBox={`${-pad} ${-pad} ${W + pad * 2} ${L + pad * 2}`} role="img" aria-label="A hand-drawn floor plan sketch on squared paper, rooms marked LR, DR, K, MB, T and B1 with sizes">
+    <svg className="lp-drawing lp-sketch" viewBox={`${-pad} ${-pad} ${W + pad * 2} ${L + pad * 2}`} role="img" aria-label="A hand-drawn floor plan sketch on squared paper, rooms marked Drg, Din, K, MB, B2, B3, T and Pooja with sizes">
       <g className="lp-sketch-grid">
         {grid.map((g) => <line key={`v${g}`} x1={g} y1={-pad} x2={g} y2={L + pad} />)}
         {rows.map((g) => <line key={`h${g}`} x1={-pad} y1={g} x2={W + pad} y2={g} />)}
       </g>
       <g className="lp-sketch-ink">
         {DEMO_ROOMS.map((r, i) => (
-          <g key={r.name}>
+          <g key={`${r.name}-${r.x}-${r.z}`}>
             <path d={pencil(r.x, r.z, r.x + r.w, r.z, i * 10 + 1)} />
             <path d={pencil(r.x + r.w, r.z, r.x + r.w, r.z + r.l, i * 10 + 2)} />
             <path d={pencil(r.x + r.w, r.z + r.l, r.x, r.z + r.l, i * 10 + 3)} />
@@ -73,7 +80,7 @@ export function PlanDrawing() {
   return (
     <svg className="lp-drawing lp-plan" viewBox={`${-pad} ${-pad} ${W + pad * 2} ${L + pad * 2 + 3}`} role="img" aria-label="The same plan drawn to scale with full room names and sizes in feet">
       {DEMO_ROOMS.map((r) => (
-        <g key={r.name}>
+        <g key={`${r.name}-${r.x}-${r.z}`}>
           <rect x={r.x} y={r.z} width={r.w} height={r.l} />
           <text className="lp-plan-name" x={r.x + 0.9} y={r.z + 2.1}>{r.name}</text>
           <text className="lp-plan-dim" x={r.x + 0.9} y={r.z + 3.9}>{r.w} × {r.l} ft</text>
@@ -128,7 +135,7 @@ export function AxoDrawing() {
     <svg className="lp-drawing lp-axo" viewBox={`${minX} ${minY} ${maxX - minX} ${maxY - minY}`} role="img" aria-label="The same plan raised in 3D: red-oxide floors and limewashed walls, cut away so every room shows">
       <polygon className="lp-axo-shadow" points={poly([iso(0.8, L + 0.4), iso(W + 0.8, L + 0.4), iso(W + 1.6, -0.4), iso(W + 0.8, -0.4)])} />
       {DEMO_ROOMS.map((r) => (
-        <polygon key={r.name} className="lp-axo-floor" points={poly([iso(r.x, r.z), iso(r.x + r.w, r.z), iso(r.x + r.w, r.z + r.l), iso(r.x, r.z + r.l)])} />
+        <polygon key={`${r.name}-${r.x}-${r.z}`} className="lp-axo-floor" points={poly([iso(r.x, r.z), iso(r.x + r.w, r.z), iso(r.x + r.w, r.z + r.l), iso(r.x, r.z + r.l)])} />
       ))}
       {faces.map((f) => (
         <polygon key={f.key} className={f.cls} points={poly(f.pts)} />
