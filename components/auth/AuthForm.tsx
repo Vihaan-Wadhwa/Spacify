@@ -34,10 +34,12 @@ type Props = {
   next: string;
   /** Prefilled values, e.g. name and email from the landing page form. */
   defaults?: Partial<Record<string, string>>;
+  /** When set, the "log in / create an account" switch calls this instead of going to the other page. */
+  onSwitch?: () => void;
 };
 
 /** The login / register card. Checks the fields here first, then posts to /api/auth/<mode>. */
-export function AuthForm({ mode, next, defaults = {} }: Props) {
+export function AuthForm({ mode, next, defaults = {}, onSwitch }: Props) {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [formError, setFormError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -109,7 +111,13 @@ export function AuthForm({ mode, next, defaults = {} }: Props) {
 
       <p className="auth-switch">
         {mode === "login" ? "New to Spacify? " : "Already have an account? "}
-        <Link href={otherHref}>{mode === "login" ? "Create an account" : "Log in"}</Link>
+        {onSwitch ? (
+          <button type="button" className="auth-switch-btn" onClick={onSwitch}>
+            {mode === "login" ? "Create an account" : "Log in"}
+          </button>
+        ) : (
+          <Link href={otherHref}>{mode === "login" ? "Create an account" : "Log in"}</Link>
+        )}
       </p>
     </div>
   );

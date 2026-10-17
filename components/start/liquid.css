@@ -1,0 +1,54 @@
+/* The thinking blob (LiquidMind). The glass itself is drawn by its shader; this styles what sits around it. */
+.lm { overflow: hidden; pointer-events: none; transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s linear 0s; }
+.lm.is-hidden { opacity: 0; visibility: hidden; transition: opacity 0.7s cubic-bezier(0.16, 1, 0.3, 1), visibility 0s linear 0.7s; }
+.lm-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.lm-labels, .lm-drops { position: absolute; inset: 0; }
+.lm-ground { position: absolute; width: 0; height: 0; }
+
+/* The words on each answer's pill */
+.lm-label {
+  position: absolute; translate: -50% -50%; opacity: 0; white-space: nowrap; color: #1d2025;
+  font: 580 16px/1 var(--display, "Anek Latin Variable", system-ui, sans-serif);
+}
+.lm-label.is-mono { font: 400 13px/1 var(--mono, "Martian Mono Variable", ui-monospace, monospace); }
+
+/* Light the glass throws on the marble, and the waves while it thinks */
+.lm-caustic {
+  position: absolute; left: 0; translate: -50% 0; border-radius: 50%; opacity: 0.6;
+  background: radial-gradient(ellipse at center, rgba(214, 174, 91, 0.55) 0%, rgba(214, 174, 91, 0) 70%);
+  transition: opacity 0.8s ease, transform 0.8s ease;
+}
+.lm-wave { position: absolute; left: 0; top: 0; translate: -50% -50%; border-radius: 50%; border: 2px solid #c9a04a; opacity: 0; }
+.lm.is-thinking .lm-caustic { opacity: 0.95; transform: scaleX(1.2); }
+.lm.is-split .lm-caustic { opacity: 0; }
+
+/* Gold seams drawn out from the blob to every edge while it thinks; they draw back when it re-forms */
+.lm .lm-veins { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.lm-veins path { stroke-dasharray: 1 1; stroke-dashoffset: 1; transition: stroke-dashoffset 2.6s cubic-bezier(0.16, 1, 0.3, 1); }
+.lm.is-veined .lm-veins path { stroke-dashoffset: 0; }
+.lm.is-thinking .lm-wave { animation: lm-wave 2.1s ease-out infinite; }
+.lm.is-thinking .lm-wave2 { animation-delay: 0.7s; }
+.lm.is-thinking .lm-wave3 { animation-delay: 1.4s; }
+@keyframes lm-wave { 0% { opacity: 0.5; transform: scale(0.75); } 100% { opacity: 0; transform: scale(4.5); } }
+
+/* Drops are plans: a ring when chosen, a caption under each */
+.lm-drops { pointer-events: none; }
+.lm-drop { position: absolute; translate: -50% -50%; pointer-events: auto; animation: lm-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.lm-drop button { position: absolute; inset: 0; border-radius: 50%; border: 0; background: none; cursor: pointer; }
+.lm-drop::after {
+  content: ""; position: absolute; inset: -9px; border-radius: 50%; border: 1.5px solid #8f6a22; opacity: 0; transform: scale(0.94);
+  transition: opacity 0.3s ease, transform 0.4s cubic-bezier(0.16, 1, 0.3, 1); pointer-events: none;
+}
+.lm-drop:hover::after { opacity: 0.45; transform: none; }
+.lm-drop.is-picked::after { opacity: 1; transform: none; }
+.lm-drop-caption { position: absolute; left: 50%; translate: -50% 0; width: 170px; display: grid; justify-items: center; gap: 4px; text-align: center; pointer-events: none; }
+.lm-drop-title { font: 600 14px/1.2 var(--display, "Anek Latin Variable", system-ui, sans-serif); color: #1d2025; text-wrap: balance; }
+.lm-drop-score { font: 400 11px/1 var(--mono, "Martian Mono Variable", ui-monospace, monospace); color: #8f6a22; }
+@keyframes lm-in { from { opacity: 0; } to { opacity: 1; } }
+
+.lm.is-offscreen *, .lm.is-hidden * { animation-play-state: paused !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .lm.is-thinking .lm-wave { animation: none !important; }
+  .lm-veins path { transition: none; }
+}

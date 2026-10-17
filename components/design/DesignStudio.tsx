@@ -11,6 +11,7 @@ import {
   DEFAULT_LAYERS,
   MAX_FLOORS,
   ROOM_DEFAULTS,
+  ROOM_SIZE,
   defaultOpenings,
   describeProject,
   fitOpenings,
@@ -25,6 +26,7 @@ import {
   type RoomDraft,
   type StudioTab,
 } from "@/lib/rooms";
+import { HANDOFF_KEY, type Handoff } from "@/lib/start";
 import { CanvasOverlays } from "./CanvasOverlays";
 import { ChatView } from "./ChatView";
 import { DesignPanel } from "./DesignPanel";
@@ -112,6 +114,29 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
     clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), ms);
   }, []);
+
+  // A plan chosen on /start opens here as a new, unsaved project (once; the hand-off is removed after reading).
+  useEffect(() => {
+    if (demo || initialProject) return;
+    let handoff: Handoff | null = null;
+    try {
+      handoff = JSON.parse(sessionStorage.getItem(HANDOFF_KEY) ?? "null") as Handoff | null;
+      sessionStorage.removeItem(HANDOFF_KEY);
+    } catch {
+      return;
+    }
+    if (!handoff?.rooms?.length) return;
+    const clampSide = (v: number) => Math.max(ROOM_SIZE.min, Math.min(ROOM_SIZE.max, v));
+    const rooms = handoff.rooms.map((r) => {
+      const w = clampSide(r.w);
+      const l = clampSide(r.l);
+      return { ...r, w, l, id: nextId.current++, openings: defaultOpenings(w) };
+    });
+    setRooms(rooms);
+    setFloorsState(Math.min(MAX_FLOORS, Math.max(1, handoff.floors)));
+    setProjectName(handoff.name);
+    showToast("Your plan from Start is here. Move walls, add doors and windows, then Save.", 5000);
+  }, [demo, initialProject, showToast]);
 
   // A load error stays up longer than a normal toast.
   useEffect(() => {
