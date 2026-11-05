@@ -10,7 +10,7 @@ export function downloadDataUrl(dataUrl: string, filename: string) {
  * Shrinks an uploaded image to at most `max` px on its longest side and re-encodes it as JPEG.
  * Turns a 3 MB phone photo into ~100 KB before it goes to the AI.
  */
-export function compressImage(file: File, max = 800, quality = 0.75): Promise<{ dataUrl: string; base64: string; mimeType: string }> {
+export function compressImage(file: File, max = 800, quality = 0.75): Promise<{ dataUrl: string; base64: string; mimeType: string; width: number; height: number }> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     const objectUrl = URL.createObjectURL(file);
@@ -34,7 +34,7 @@ export function compressImage(file: File, max = 800, quality = 0.75): Promise<{ 
       ctx.drawImage(img, 0, 0, w, h);
       URL.revokeObjectURL(objectUrl);
       const dataUrl = canvas.toDataURL("image/jpeg", quality);
-      resolve({ dataUrl, base64: dataUrl.split(",")[1], mimeType: "image/jpeg" });
+      resolve({ dataUrl, base64: dataUrl.split(",")[1], mimeType: "image/jpeg", width: w, height: h });
     };
     img.onerror = () => {
       URL.revokeObjectURL(objectUrl);

@@ -15,7 +15,8 @@
         "additionalProperties": false,
         "properties": {
           "finish": { "enum": ["paint", "tiles", "marble", "wallpaper", "wood_panel"] },
-          "color": { "bsonType": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+          "color": { "bsonType": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+          "name": { "bsonType": "string", "minLength": 1, "maxLength": 50, "description": "marble / wallpaper design or paint shade" }
         }
       },
       "flooring": {
@@ -26,6 +27,48 @@
           "material": { "enum": ["marble", "vitrified", "tiles", "wood", "granite"] },
           "name": { "bsonType": "string", "minLength": 1, "maxLength": 50 },
           "color": { "bsonType": "string", "pattern": "^#[0-9a-fA-F]{6}$" }
+        }
+      },
+      "windows": {
+        "bsonType": "object",
+        "required": ["type", "frame", "color", "polish"],
+        "additionalProperties": false,
+        "properties": {
+          "type": { "enum": ["sliding", "casement", "fixed", "mesh"] },
+          "frame": { "enum": ["aluminium", "wood"] },
+          "color": { "bsonType": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+          "polish": { "enum": ["matte", "satin", "gloss"] }
+        }
+      },
+      "doors": {
+        "bsonType": "object",
+        "required": ["style", "color", "polish"],
+        "additionalProperties": false,
+        "properties": {
+          "style": { "enum": ["flush", "panelled", "grooved", "glass"] },
+          "color": { "bsonType": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+          "polish": { "enum": ["matte", "satin", "gloss"] }
+        }
+      },
+      "furniture": {
+        "bsonType": "array",
+        "maxItems": 40,
+        "items": {
+          "bsonType": "object",
+          "required": ["id", "type", "x", "z", "rot"],
+          "additionalProperties": false,
+          "properties": {
+            "id": { "bsonType": "int", "minimum": 1 },
+            "type": {
+              "enum": [
+                "bed_single", "bed_double", "bed_queen", "bed_king", "bedside_table", "cupboard",
+                "dressing_table", "study_table", "tv_panel", "sofa", "dining_table"
+              ]
+            },
+            "x": { "bsonType": ["double", "int"], "minimum": 0, "maximum": 100, "description": "feet from the room's west wall to the item's centre" },
+            "z": { "bsonType": ["double", "int"], "minimum": 0, "maximum": 100, "description": "feet from the room's north wall" },
+            "rot": { "enum": [0, 90, 180, 270] }
+          }
         }
       },
       "ceiling": {
@@ -53,7 +96,7 @@
         "bsonType": "object",
         "required": ["layout", "countertop"],
         "additionalProperties": false,
-        "description": "kitchens only",
+        "description": "kitchens only; present = modular kitchen",
         "properties": {
           "layout": { "enum": ["L", "U", "parallel", "island", "straight"] },
           "countertop": { "bsonType": "string", "minLength": 1, "maxLength": 50 }

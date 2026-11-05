@@ -10,10 +10,12 @@ type Props = {
   floors: number;
   selectedId: number | null;
   addSelectRef: React.Ref<HTMLSelectElement>;
-  onAddRoom: (type: string) => void;
+  onAddRoom: (type: string, floor: number) => void;
   onUpdateRoom: (id: number, patch: Partial<Omit<Room, "id">>) => void;
   onDeleteRoom: (id: number) => void;
   onSelectRoom: (id: number) => void;
+  /** Opens the shape editor (draw or photograph a room's outline). */
+  onEditShape: (id: number) => void;
   onSetFloors: (n: number) => void;
   onReupload: () => void;
   onShowTutorial: () => void;
@@ -35,6 +37,7 @@ export function RoomPanel({
   onUpdateRoom,
   onDeleteRoom,
   onSelectRoom,
+  onEditShape,
   onSetFloors,
   onReupload,
   onShowTutorial,
@@ -43,10 +46,13 @@ export function RoomPanel({
   const [newType, setNewType] = useState(ROOM_TYPES[0]);
   // For "Other": what the room is (gaming room, office…). Blank adds it as "Other".
   const [otherName, setOtherName] = useState("");
+  // Which floor new rooms go on: the newest floor right after one is added.
+  const [addFloor, setAddFloor] = useState(1);
+  const targetFloor = Math.min(addFloor, floors);
 
   function addRoom() {
-    if (newType !== OTHER_ROOM) return onAddRoom(newType);
-    onAddRoom(otherName.trim().slice(0, 50) || OTHER_ROOM);
+    if (newType !== OTHER_ROOM) return onAddRoom(newType, targetFloor);
+    onAddRoom(otherName.trim().slice(0, 50) || OTHER_ROOM, targetFloor);
     setOtherName("");
   }
 
@@ -118,6 +124,18 @@ export function RoomPanel({
                       />
                     </div>
                   ))}
+                  <div className="dim-input shape-field">
+                    <span className="shape-label">Shape</span>
+                    <span className="shape-value">{r.shape ? `Custom · ${r.shape.length} walls` : "Rectangle"}</span>
+                    <button
+                      className="shape-btn"
+                      onClick={() => onEditShape(r.id)}
+                      disabled={/stair/i.test(r.name)}
+                      title={/stair/i.test(r.name) ? "Staircases stay rectangular" : "Draw the room's outline, or upload a photo of one drawn on paper"}
+                    >
+                      {r.shape ? "Change…" : "Draw or upload…"}
+                    </button>
+                  </div>
                   <div className="dim-input">
                     <label htmlFor={`room-${r.id}-floor`}>Floor</label>
                     <select id={`room-${r.id}-floor`} value={r.floor} onChange={(e) => onUpdateRoom(r.id, { floor: Number(e.target.value) })}>
@@ -144,6 +162,13 @@ export function RoomPanel({
               <option key={t} value={t}>{t === OTHER_ROOM ? "Other (name it)…" : t}</option>
             ))}
           </select>
+          {floors > 1 && (
+            <select className="room-type-select floor-pick" value={targetFloor} onChange={(e) => setAddFloor(Number(e.target.value))} aria-label="Floor for the new room">
+              {Array.from({ length: floors }, (_, i) => i + 1).map((f) => (
+                <option key={f} value={f}>F{f}</option>
+              ))}
+            </select>
+          )}
           <button className="add-btn" onClick={addRoom}>+ Add room</button>
         </div>
         {newType === OTHER_ROOM && (
@@ -161,7 +186,14 @@ export function RoomPanel({
         <div className="floors-row">
           <span>Floors:</span>
           {Array.from({ length: MAX_FLOORS }, (_, i) => i + 1).map((n) => (
-            <button key={n} className={`cam-btn small${floors === n ? " active" : ""}`} onClick={() => onSetFloors(n)}>
+            <button
+              key={n}
+              className={`cam-btn small${floors === n ? " active" : ""}`}
+              onClick={() => {
+                if (n > floors) setAddFloor(n);
+                onSetFloors(n);
+              }}
+            >
               {n}
             </button>
           ))}

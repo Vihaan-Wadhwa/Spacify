@@ -28,7 +28,7 @@ function doorArc(room: (typeof DEMO_PLAN)[number], o: Omit<Opening, "id">): stri
   const along: [number, number] = line.axis === "x" ? [1, 0] : [0, 1];
   const hinge: [number, number] = line.axis === "x" ? [line.from + o.offset, line.at] : [line.at, line.from + o.offset];
   const end: [number, number] = [hinge[0] + along[0] * o.width, hinge[1] + along[1] * o.width];
-  const [ix, iz] = INWARD[o.wall];
+  const [ix, iz] = INWARD[o.wall as Wall]; // the sample home's rooms are all rectangles
   const leaf: [number, number] = [hinge[0] + ix * o.width, hinge[1] + iz * o.width];
   const cross = along[0] * iz - along[1] * ix; // SVG's y grows downward, like z
   return `M${end[0]} ${end[1]} A${o.width} ${o.width} 0 0 ${cross > 0 ? 1 : 0} ${leaf[0]} ${leaf[1]}`;

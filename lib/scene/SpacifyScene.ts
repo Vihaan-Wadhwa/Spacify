@@ -1,15 +1,16 @@
 import * as THREE from "three";
-import {
-  WALLS,
-  planBounds,
-  roomColor,
-  wallCuts,
-  wallLine,
-  type CameraPreset,
-  type Layers,
-  type Room,
-  type RoomDesign,
-} from "@/lib/rooms";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { GTAOPass } from "three/addons/postprocessing/GTAOPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { clampToRoom, footprint } from "@/lib/furniture";
+import { planBounds, roomSizeText, roomWalls, sharedSpans, type CameraPreset, type Layers, type Room, type RoomDesign } from "@/lib/rooms";
+import { disposeGeometry } from "./build";
+import { FT, buildRoom, floorLevels, resolveDesign, type Collider, type DoorRig, type HouseContext, type Platform, type RoomBuild } from "./house";
+import { MaterialLibrary } from "./materials";
+import { World } from "./world";
+
+export type ItemRef = { roomId: number; itemId: number };
 
 export type SceneState = {
   rooms: Room[];
@@ -17,55 +18,49 @@ export type SceneState = {
   layers: Layers;
   designs: Record<number, RoomDesign>;
   selectedId: number | null;
+  /** Show only this floor and the ones below it (orbit view). Null shows every floor. */
+  viewFloor: number | null;
+  /** Furniture can be picked and dragged (Interior Design tab). */
+  editFurniture: boolean;
+  selectedItem: ItemRef | null;
 };
 
 type Handlers = {
   onSelect: (roomId: number | null) => void;
   onWalkExit: () => void;
+  onSelectItem: (item: ItemRef | null) => void;
+  /** A piece was dragged to x, z (feet from the room's north-west corner). */
+  onMoveItem: (item: ItemRef, x: number, z: number) => void;
 };
 
 type Spherical = { theta: number; phi: number; radius: number };
 
-/** A room's box in scene units. */
-type Box = { x: number; z: number; w: number; l: number; h: number };
-
-const FT_TO_UNITS = 0.3;
-const FLOOR_SPACING = 3.2;
-const WALL_T = 0.12;
-// Heights in feet above the floor
-const DOOR_TOP = 7;
-const SILL = 3;
-const MIN_RADIUS = 5;
-const MAX_RADIUS = 80;
-
-const PRESETS: Record<CameraPreset, Spherical> = {
-  persp: { theta: Math.PI / 4, phi: Math.PI / 3.5, radius: 38 },
-  top: { theta: Math.PI / 4, phi: 0.05, radius: 42 },
-  front: { theta: 0, phi: Math.PI / 2.2, radius: 38 },
-  side: { theta: Math.PI / 2, phi: Math.PI / 2.8, radius: 38 },
+const PRESETS: Record<CameraPreset, Omit<Spherical, "radius">> = {
+  persp: { theta: Math.PI / 5, phi: Math.PI / 3.3 },
+  top: { theta: 0, phi: 0.02 },
+  front: { theta: 0, phi: Math.PI / 2.4 },
+  side: { theta: Math.PI / 2, phi: Math.PI / 2.6 },
 };
+const MIN_RADIUS = 3;
+const MAX_RADIUS = 140;
+
+// Walkthrough body, metres
+const EYE = 1.62;
+const RADIUS = 0.24;
+const STEP_UP = 0.36;
+const BODY = 1.75;
+const WALK_SPEED = 1.6;
+const RUN_SPEED = 3.4;
+
+const ACCENT = new THREE.Color("#a6e36f");
+/** Strength of the sky's fill light outdoors and indoors (where walls and the ceiling block most of it). */
+const ENV_OUTDOOR = 0.8;
+const ENV_INDOOR = 0.6;
 
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const damp = (dt: number, rate: number) => 1 - Math.exp(-dt * rate);
 
-/** Frees GPU memory for everything inside a group, then empties it. */
-function clearGroup(group: THREE.Group) {
-  group.traverse((obj) => {
-    const mesh = obj as THREE.Mesh;
-    if (!mesh.isMesh) return;
-    mesh.geometry.dispose();
-    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    for (const m of mats) {
-      (m as THREE.MeshBasicMaterial).map?.dispose();
-      m.dispose();
-    }
-  });
-  group.clear();
-}
-
-function cssVar(name: string, fallback: string) {
-  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  return v || fallback;
-}
+type Entry = { room: Room; design: RoomDesign | undefined; build: RoomBuild };
 
 /**
  * The imperative Three.js scene. React owns the state; this class only draws it.
@@ -74,37 +69,72 @@ function cssVar(name: string, fallback: string) {
 export class SpacifyScene {
   private renderer: THREE.WebGLRenderer;
   private scene = new THREE.Scene();
-  private camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
-  private walkCamera = new THREE.PerspectiveCamera(70, 1, 0.05, 200);
-  private grid = new THREE.GridHelper(60, 60, 0x333333, 0x222222);
-  private wallGroup = new THREE.Group();
-  private floorGroup = new THREE.Group();
-  private furnitureGroup = new THREE.Group();
-  private labelGroup = new THREE.Group();
+  private camera = new THREE.PerspectiveCamera(42, 1, 0.1, 1500);
+  private walkCamera = new THREE.PerspectiveCamera(68, 1, 0.06, 1500);
+  private composer: EffectComposer;
+  private renderPass: RenderPass;
+  private aoPass: GTAOPass;
+  private mats = new MaterialLibrary();
+  private world: World;
+  private grid = new THREE.GridHelper(80, 80, 0x8a9a7a, 0x6f7a66);
+
+  // One group per layer; each holds every room's part of that layer.
+  private layerGroups = {
+    structure: new THREE.Group(),
+    floors: new THREE.Group(),
+    ceilings: new THREE.Group(),
+    roofs: new THREE.Group(),
+    furniture: new THREE.Group(),
+    cupboards: new THREE.Group(),
+    fixtures: new THREE.Group(),
+  };
+  private selection = new THREE.Group();
+  private roomLight = new THREE.PointLight("#ffdcb0", 0, 0, 2);
+
+  private entries = new Map<number, Entry>();
+  private ctx: HouseContext | null = null;
+  private colliders: Collider[] = [];
+  private platforms: Platform[] = [];
+  private doors: DoorRig[] = [];
+  private houseSize = 15;
+  private plotBounds = { x0: -20, x1: 20, z0: -20, z1: 20 };
+
   private raycaster = new THREE.Raycaster();
   private pointer = new THREE.Vector2();
-
-  private spherical: Spherical = { ...PRESETS.persp };
-  private orbitTarget = new THREE.Vector3(0, 0, 0);
   private state: SceneState | null = null;
   private rafId = 0;
+  private lastTime = performance.now();
+  private dirty = true;
   private resizeObserver: ResizeObserver;
   private cleanups: (() => void)[] = [];
 
-  // Pointer / drag state
-  private dragging = false;
-  private dragMoved = false;
-  private lastX = 0;
-  private lastY = 0;
+  // Orbit camera: where it is and where it's heading (eased each frame)
+  private spherical: Spherical = { ...PRESETS.persp, radius: 38 };
+  private goal: Spherical = { ...PRESETS.persp, radius: 38 };
+  private target = new THREE.Vector3();
+  private targetGoal = new THREE.Vector3();
+
+  // Pointer state
+  private drag: { mode: "orbit" | "pan" | "item"; moved: boolean; x: number; y: number } | null = null;
+  private itemDrag: { ref: ItemRef; object: THREE.Object3D; plane: THREE.Plane; offset: THREE.Vector3; x: number; z: number } | null = null;
   private lastPinch: number | null = null;
 
-  // Walkthrough state
+  // Walkthrough
   private walking = false;
-  private walkPos = new THREE.Vector3(0, 1.7, 8);
-  private walkYaw = Math.PI;
-  private walkPitch = 0;
-  private walkKeys: Record<string, boolean> = {};
+  private feet = new THREE.Vector3();
+  private velocity = new THREE.Vector3();
+  private fall = 0;
+  private eyeY = 0;
+  private yaw = 0;
+  private pitch = 0;
+  private stride = 0;
+  private keys: Record<string, boolean> = {};
   private hadPointerLock = false;
+  private exposure = 1;
+  private currentRoom: number | null = null;
+  private slowFrames = 0;
+  private frames = 0;
+  private quality = 2;
 
   constructor(
     private canvas: HTMLCanvasElement,
@@ -112,24 +142,46 @@ export class SpacifyScene {
     private tooltip: HTMLElement | null,
     private handlers: Handlers
   ) {
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1;
 
-    // Modern three.js uses physical light units; ×π keeps the brightness of the old r128 build.
-    this.scene.add(new THREE.AmbientLight(0xffffff, 0.5 * Math.PI));
-    const sun = new THREE.DirectionalLight(0xffffff, 0.9 * Math.PI);
-    sun.position.set(20, 30, 20);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
-    Object.assign(sun.shadow.camera, { near: 0.5, far: 200, left: -40, right: 40, top: 40, bottom: -40 });
-    this.scene.add(sun);
-    const fill = new THREE.DirectionalLight(0xffffff, 0.3 * Math.PI);
-    fill.position.set(-15, 10, -10);
-    this.scene.add(fill);
+    this.world = new World(this.renderer, this.scene, this.mats);
+    this.scene.environmentIntensity = ENV_OUTDOOR;
 
-    this.scene.add(this.grid, this.wallGroup, this.floorGroup, this.furnitureGroup, this.labelGroup);
+    this.roomLight.castShadow = true;
+    this.roomLight.shadow.mapSize.set(512, 512);
+    this.roomLight.shadow.bias = -0.004;
+    this.roomLight.shadow.radius = 3;
+    this.roomLight.shadow.camera.near = 0.1;
+    this.roomLight.shadow.camera.far = 25;
+    this.roomLight.visible = false;
+
+    this.grid.position.y = 0.025;
+    this.grid.visible = false;
+    (this.grid.material as THREE.Material).transparent = true;
+    (this.grid.material as THREE.Material).opacity = 0.35;
+    this.grid.userData.noAO = true;
+
+    this.scene.add(this.grid, this.selection, this.roomLight, ...Object.values(this.layerGroups));
+
+    // HDR render with 4× MSAA → ambient occlusion → tone mapping and sRGB
+    const target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 });
+    this.composer = new EffectComposer(this.renderer, target);
+    this.renderPass = new RenderPass(this.scene, this.camera);
+    this.aoPass = new GTAOPass(this.scene, this.camera, 1, 1);
+    this.aoPass.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.5, thickness: 1.2, scale: 1.1, samples: 16 });
+    this.aoPass.updatePdMaterial({ lumaPhi: 10, depthPhi: 2, normalPhi: 3, radius: 6, rings: 2, samples: 16 });
+    this.aoPass.blendIntensity = 0.9;
+    this.hideFromAo(this.aoPass);
+    this.composer.addPass(this.renderPass);
+    this.composer.addPass(this.aoPass);
+    this.composer.addPass(new OutputPass());
 
     this.bindInput();
     this.resizeObserver = new ResizeObserver(() => this.resize());
@@ -139,59 +191,72 @@ export class SpacifyScene {
     this.loop();
   }
 
+  /** Glass, insect mesh and leaf cards would cast flat grey AO, so the AO pass doesn't see them. */
+  private hideFromAo(pass: GTAOPass) {
+    const p = pass as unknown as { _overrideVisibility: () => void; _visibilityCache: THREE.Object3D[] };
+    const original = p._overrideVisibility.bind(pass);
+    p._overrideVisibility = () => {
+      original();
+      this.scene.traverse((o) => {
+        if (o.visible && o.userData.noAO) {
+          o.visible = false;
+          p._visibilityCache.push(o);
+        }
+      });
+    };
+  }
+
   // ─── Public API ────────────────────────────────────────────
 
   update(next: SceneState) {
     const prev = this.state;
     this.state = next;
-    const needsRebuild =
-      !prev ||
-      prev.rooms !== next.rooms ||
-      prev.floors !== next.floors ||
-      prev.designs !== next.designs ||
-      prev.layers.furniture !== next.layers.furniture ||
-      prev.layers.labels !== next.layers.labels;
-    if (needsRebuild) this.build();
+    if (!prev || prev.rooms !== next.rooms || prev.floors !== next.floors) this.rebuildAll();
+    else if (prev.designs !== next.designs) this.rebuildChanged();
     this.applyVisibility();
     this.applySelection();
-  }
-
-  setTheme(theme: "dark" | "light") {
-    this.renderer.setClearColor(theme === "dark" ? 0x0a0a0a : 0xf5f3ef, 1);
-    // GridHelper bakes its colours into vertex colours, so swap in a new one rather than tinting the material.
-    const visible = this.grid.visible;
-    this.scene.remove(this.grid);
-    this.grid.dispose();
-    this.grid = theme === "dark" ? new THREE.GridHelper(60, 60, 0x333333, 0x222222) : new THREE.GridHelper(60, 60, 0xc4c2bc, 0xdcdad4);
-    this.grid.visible = visible;
-    this.scene.add(this.grid);
+    this.invalidate(true);
   }
 
   setCameraPreset(preset: CameraPreset) {
-    this.spherical = { ...PRESETS[preset] };
-    this.updateCamera();
+    this.goal = { ...PRESETS[preset], radius: this.fitRadius() };
+    this.targetGoal.set(0, 0, 0);
+    this.invalidate();
   }
 
   zoom(delta: number) {
-    this.spherical.radius = clamp(this.spherical.radius + delta, MIN_RADIUS, MAX_RADIUS);
-    this.updateCamera();
+    this.goal.radius = clamp(this.goal.radius * (delta > 0 ? 1.18 : 0.85), MIN_RADIUS, MAX_RADIUS);
+    this.invalidate();
+  }
+
+  /** Swings the camera round to look into one room. */
+  focusRoom(roomId: number) {
+    const b = this.entries.get(roomId)?.build.bounds;
+    if (!b) return;
+    this.targetGoal.set((b.x0 + b.x1) / 2, b.y, (b.z0 + b.z1) / 2);
+    // Look down into it steeply enough to see over the walls of the rooms around it.
+    this.goal.radius = clamp(Math.hypot(b.x1 - b.x0, b.z1 - b.z0) * 1.9 + b.h, 8, 40);
+    this.goal.phi = 0.5;
+    this.invalidate();
   }
 
   /** Returns the current view as a PNG data URL. */
   snapshot(): string {
-    this.renderer.render(this.scene, this.walking ? this.walkCamera : this.camera);
+    this.render();
     return this.renderer.domElement.toDataURL("image/png");
   }
 
-  enterWalk() {
-    if (this.walking) return;
+  /** Starts walking, just inside `roomId`'s door (or the living room's, or the first room's). */
+  enterWalk(roomId: number | null) {
+    if (this.walking || !this.state) return;
     this.walking = true;
-    this.walkPos.set(0, 1.7, 8);
-    this.walkYaw = Math.PI;
-    this.walkPitch = 0;
-    this.walkKeys = {};
+    this.keys = {};
     this.hadPointerLock = false;
     if (this.tooltip) this.tooltip.style.opacity = "0";
+    this.spawn(roomId);
+    this.applyVisibility();
+    this.applySelection();
+    this.invalidate(true);
     // Pointer lock can be refused (e.g. inside some iframes); WASD still works without mouse-look.
     const lock = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined;
     lock?.catch?.(() => {});
@@ -200,272 +265,285 @@ export class SpacifyScene {
   exitWalk() {
     if (!this.walking) return;
     this.walking = false;
-    this.walkKeys = {};
+    this.keys = {};
     if (document.pointerLockElement === this.canvas) document.exitPointerLock();
-    this.updateCamera();
+    for (const d of this.doors) this.setDoor(d, 0);
+    this.roomLight.visible = false;
+    this.roomLight.intensity = 0;
+    this.renderer.toneMappingExposure = this.exposure = 1;
+    this.scene.environmentIntensity = ENV_OUTDOOR;
+    this.applyVisibility();
+    this.applySelection();
+    this.setCamera(this.camera);
+    this.invalidate(true);
   }
 
   dispose() {
     cancelAnimationFrame(this.rafId);
     this.resizeObserver.disconnect();
     this.cleanups.forEach((fn) => fn());
-    [this.wallGroup, this.floorGroup, this.furnitureGroup, this.labelGroup].forEach(clearGroup);
+    for (const g of Object.values(this.layerGroups)) disposeGeometry(g);
+    disposeGeometry(this.selection);
+    this.world.dispose();
+    this.mats.dispose();
     this.grid.dispose();
+    this.aoPass.dispose();
+    this.composer.dispose();
     this.renderer.dispose();
   }
 
   // ─── Rendering ─────────────────────────────────────────────
 
+  /** Asks for a new frame; `shadows` also redraws the shadow maps (the scene changed). */
+  private invalidate(shadows = false) {
+    this.dirty = true;
+    if (shadows) this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  private render() {
+    this.composer.render();
+  }
+
   private loop = () => {
     this.rafId = requestAnimationFrame(this.loop);
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+    this.lastTime = now;
     if (this.walking) {
-      this.stepWalk();
-      this.renderer.render(this.scene, this.walkCamera);
-    } else {
-      for (const label of this.labelGroup.children) label.quaternion.copy(this.camera.quaternion);
-      this.renderer.render(this.scene, this.camera);
+      this.stepWalk(dt);
+      this.render();
+      this.adaptQuality(dt);
+      return;
     }
+    if (this.easeCamera(dt)) this.dirty = true;
+    if (!this.dirty) return;
+    this.dirty = false;
+    this.render();
   };
+
+  /** Drops ambient occlusion, then resolution, if the walkthrough can't keep ~30 fps. */
+  private adaptQuality(dt: number) {
+    this.frames++;
+    if (dt > 0.036) this.slowFrames++;
+    if (this.frames < 90) return;
+    if (this.slowFrames > 60 && this.quality > 0) {
+      this.quality--;
+      if (this.quality === 1) {
+        this.aoPass.enabled = false;
+      } else {
+        this.renderer.setPixelRatio(1);
+        this.resize();
+      }
+    }
+    this.frames = this.slowFrames = 0;
+  }
 
   private resize() {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
     if (!w || !h) return;
     this.renderer.setSize(w, h, false);
-    this.camera.aspect = w / h;
-    this.camera.updateProjectionMatrix();
-    this.walkCamera.aspect = w / h;
-    this.walkCamera.updateProjectionMatrix();
+    this.composer.setPixelRatio(this.renderer.getPixelRatio());
+    this.composer.setSize(w, h);
+    for (const cam of [this.camera, this.walkCamera]) {
+      cam.aspect = w / h;
+      cam.updateProjectionMatrix();
+    }
+    this.invalidate();
+  }
+
+  private setCamera(cam: THREE.PerspectiveCamera) {
+    this.renderPass.camera = cam;
+    this.aoPass.camera = cam;
   }
 
   private updateCamera() {
     const { theta, phi, radius } = this.spherical;
     this.camera.position.set(
-      this.orbitTarget.x + radius * Math.sin(phi) * Math.sin(theta),
-      this.orbitTarget.y + radius * Math.cos(phi),
-      this.orbitTarget.z + radius * Math.sin(phi) * Math.cos(theta)
+      this.target.x + radius * Math.sin(phi) * Math.sin(theta),
+      this.target.y + radius * Math.cos(phi),
+      this.target.z + radius * Math.sin(phi) * Math.cos(theta)
     );
-    this.camera.lookAt(this.orbitTarget);
+    this.camera.lookAt(this.target);
+  }
+
+  /** Eases the orbit camera towards its goal. Returns whether it moved. */
+  private easeCamera(dt: number): boolean {
+    const k = damp(dt, 9);
+    const s = this.spherical, g = this.goal;
+    const dTheta = g.theta - s.theta, dPhi = g.phi - s.phi, dR = g.radius - s.radius;
+    const dT = this.targetGoal.distanceTo(this.target);
+    if (Math.abs(dTheta) < 1e-4 && Math.abs(dPhi) < 1e-4 && Math.abs(dR) < 1e-3 && dT < 1e-3) return false;
+    s.theta += dTheta * k;
+    s.phi += dPhi * k;
+    s.radius += dR * k;
+    this.target.lerp(this.targetGoal, k);
+    this.updateCamera();
+    return true;
+  }
+
+  private fitRadius() {
+    return clamp(this.houseSize * 1.35, 12, MAX_RADIUS);
   }
 
   // ─── Scene building ────────────────────────────────────────
 
-  private build() {
-    [this.wallGroup, this.floorGroup, this.furnitureGroup, this.labelGroup].forEach(clearGroup);
-    const state = this.state;
-    if (!state) return;
-
-    // Rooms sit where they are on the 2D plan; the whole house is centred on the origin so floors stay stacked.
+  private rebuildAll() {
+    const state = this.state!;
+    for (const id of [...this.entries.keys()]) this.removeEntry(id);
     const b = planBounds(state.rooms);
-    if (!b) return;
-    const cx = (b.minX + b.maxX) / 2;
-    const cz = (b.minZ + b.maxZ) / 2;
-    for (let floor = 1; floor <= state.floors; floor++) {
-      const floorRooms = state.rooms.filter((r) => r.floor === floor);
-      const y0 = (floor - 1) * FLOOR_SPACING;
-      for (const room of floorRooms) {
-        const design = state.designs[room.id];
-        const pos: Box = {
-          x: (room.x - cx) * FT_TO_UNITS,
-          z: (room.z - cz) * FT_TO_UNITS,
-          w: room.w * FT_TO_UNITS,
-          l: room.l * FT_TO_UNITS,
-          h: room.h * FT_TO_UNITS,
-        };
-        this.buildRoom(room, pos, y0, design, state.layers);
-        this.buildWalls(room, floorRooms, { x: cx, z: cz }, y0, design);
-      }
+    if (!b) {
+      this.ctx = null;
+      this.world.setFootprint(null);
+      this.collect();
+      return;
     }
+    const center = { x: (b.minX + b.maxX) / 2, z: (b.minZ + b.maxZ) / 2 };
+    const levels = floorLevels(state.rooms, state.floors);
+    this.ctx = { rooms: state.rooms, floors: state.floors, levels, center, designs: state.designs, mats: this.mats };
+    for (const room of state.rooms) this.addEntry(room);
+
+    const w = (b.maxX - b.minX) * FT, l = (b.maxZ - b.minZ) * FT;
+    const size = Math.hypot(w, l);
+    const sizeChanged = Math.abs(size - this.houseSize) > 0.5;
+    this.houseSize = size;
+    const top = levels[state.floors] + 4;
+    this.world.setFootprint({ x0: -w / 2, x1: w / 2, z0: -l / 2, z1: l / 2, top });
+    this.plotBounds = { x0: -w / 2 - 3.3, x1: w / 2 + 3.3, z0: -l / 2 - 3.3, z1: l / 2 + 6.8 };
+    if (sizeChanged) {
+      this.goal.radius = this.fitRadius();
+      this.targetGoal.set(0, 0, 0);
+    }
+    this.collect();
   }
 
-  private buildRoom(r: Room, pos: Box, y0: number, design: RoomDesign | undefined, layers: Layers) {
-    const colCSS = roomColor(r.name);
-    const floorColor = design?.flooring.color ?? colCSS;
-
-    // Floor slab
-    const floorMesh = new THREE.Mesh(
-      new THREE.BoxGeometry(pos.w, 0.08, pos.l),
-      new THREE.MeshLambertMaterial({ color: floorColor, transparent: true, opacity: 0.35 })
-    );
-    floorMesh.position.set(pos.x + pos.w / 2, y0 - 0.04, pos.z + pos.l / 2);
-    floorMesh.receiveShadow = true;
-    floorMesh.userData = { roomId: r.id, type: "floor" };
-    this.floorGroup.add(floorMesh);
-
-    // Ceiling slab
-    const ceil = new THREE.Mesh(
-      new THREE.BoxGeometry(pos.w, 0.06, pos.l),
-      new THREE.MeshLambertMaterial({ color: 0xffffff, transparent: true, opacity: 0.15 })
-    );
-    ceil.position.set(pos.x + pos.w / 2, y0 + pos.h, pos.z + pos.l / 2);
-    this.wallGroup.add(ceil);
-
-    if (layers.furniture) this.addFurniture(r, pos, y0);
-    if (layers.labels) this.addLabel(r, pos, y0, colCSS);
-
-    if (r.name === "Staircase") {
-      const stepMat = new THREE.MeshLambertMaterial({ color: 0xeeeeee });
-      for (let s = 0; s < 8; s++) {
-        const step = new THREE.Mesh(new THREE.BoxGeometry(pos.w, 0.1, pos.l / 8), stepMat);
-        step.position.set(pos.x + pos.w / 2, y0 + s * 0.38, pos.z + (s * pos.l) / 8 + pos.l / 16);
-        step.castShadow = true;
-        this.wallGroup.add(step);
-      }
+  /** Rebuilds rooms whose design changed, and their neighbours (whose doors show the changed room's design on one face). */
+  private rebuildChanged() {
+    const state = this.state!;
+    if (!this.ctx) return;
+    this.ctx.designs = state.designs;
+    const changed = state.rooms.filter((r) => this.entries.get(r.id)?.design !== state.designs[r.id]);
+    const ids = new Set(changed.map((r) => r.id));
+    for (const r of changed) {
+      for (const o of state.rooms) if (o.floor === r.floor && o.id !== r.id && roomWalls(o).some((e) => sharedSpans(o, e.key, [r]).length)) ids.add(o.id);
     }
+    for (const room of state.rooms) {
+      if (!ids.has(room.id)) continue;
+      this.removeEntry(room.id);
+      this.addEntry(room);
+    }
+    this.collect();
   }
 
-  /**
-   * Four walls, open top, each split around its doors and windows (including ones that belong to the room on the other
-   * side of a shared wall). A door leaves a gap with a lintel above; a window gets a sill, glass and a header.
-   */
-  private buildWalls(r: Room, floorRooms: Room[], center: { x: number; z: number }, y0: number, design: RoomDesign | undefined) {
-    // A chosen wall colour applies to all four sides; otherwise the e/w sides are a touch darker, as before.
-    const wallColor = design?.walls.color;
-    const wallMat = new THREE.MeshLambertMaterial({ color: wallColor ?? 0xfafafa, transparent: true, opacity: 0.9 });
-    const sideMat = wallColor ? wallMat : new THREE.MeshLambertMaterial({ color: 0xe8e8e8, transparent: true, opacity: 0.85 });
-    const glassMat = new THREE.MeshLambertMaterial({ color: 0x88ccff, transparent: true, opacity: 0.5 });
-    const h = r.h;
-    const doorTop = Math.min(DOOR_TOP, h - 1);
-    const sill = Math.min(SILL, doorTop - 1);
-
-    for (const wall of WALLS) {
-      const line = wallLine(r, wall);
-      const mat = line.axis === "x" ? wallMat : sideMat;
-      // Walls sit just outside the room; n/s walls run half a wall past each end to close the corners.
-      const outward = wall === "n" || wall === "w" ? -1 : 1;
-      const across = (line.at - (line.axis === "x" ? center.z : center.x)) * FT_TO_UNITS + (outward * WALL_T) / 2;
-      const ext = line.axis === "x" ? WALL_T / 2 / FT_TO_UNITS : 0;
-
-      /** One box along this wall, from `from` to `to` (feet along the wall) and `bottom` to `top` (feet up). */
-      const piece = (from: number, to: number, bottom: number, top: number, material: THREE.Material, thickness = WALL_T) => {
-        if (to - from < 0.01 || top - bottom < 0.01) return;
-        const len = (to - from) * FT_TO_UNITS;
-        const mid = ((from + to) / 2 - (line.axis === "x" ? center.x : center.z)) * FT_TO_UNITS;
-        const height = (top - bottom) * FT_TO_UNITS;
-        const mesh = new THREE.Mesh(
-          line.axis === "x" ? new THREE.BoxGeometry(len, height, thickness) : new THREE.BoxGeometry(thickness, height, len),
-          material
-        );
-        const y = y0 + ((bottom + top) / 2) * FT_TO_UNITS;
-        if (line.axis === "x") mesh.position.set(mid, y, across);
-        else mesh.position.set(across, y, mid);
-        mesh.castShadow = material !== glassMat;
-        mesh.receiveShadow = true;
-        mesh.userData = { roomId: r.id, type: "wall" };
-        this.wallGroup.add(mesh);
-      };
-
-      let solidFrom = line.from - ext;
-      for (const cut of wallCuts(r, wall, floorRooms)) {
-        piece(solidFrom, cut.from, 0, h, mat);
-        if (cut.kind === "door") {
-          piece(cut.from, cut.to, doorTop, h, mat);
-        } else {
-          piece(cut.from, cut.to, 0, sill, mat);
-          piece(cut.from, cut.to, sill, doorTop, glassMat, WALL_T * 0.3);
-          piece(cut.from, cut.to, doorTop, h, mat);
-        }
-        solidFrom = Math.max(solidFrom, cut.to);
-      }
-      piece(solidFrom, line.to + ext, 0, h, mat);
+  private addEntry(room: Room) {
+    const design = this.state!.designs[room.id];
+    const build = buildRoom(room, design, this.ctx!);
+    const g = this.layerGroups;
+    const parts: [THREE.Group, THREE.Object3D][] = [
+      [g.structure, build.structure],
+      [g.floors, build.floorGroup],
+      [g.ceilings, build.ceiling],
+      [g.roofs, build.roof],
+      [g.furniture, build.furniture],
+      [g.cupboards, build.cupboards],
+      [g.fixtures, build.fixtures],
+    ];
+    for (const [layer, part] of parts) {
+      part.userData.floor = room.floor;
+      part.userData.roomId = room.id;
+      layer.add(part);
     }
+    this.entries.set(room.id, { room, design, build });
   }
 
-  private addLabel(r: Room, pos: Box, y0: number, colCSS: string) {
-    const c = document.createElement("canvas");
-    c.width = 256;
-    c.height = 64;
-    const ctx = c.getContext("2d")!;
-    const font = cssVar("--font-sans", "sans-serif");
-    ctx.fillStyle = colCSS + "33";
-    ctx.beginPath();
-    ctx.roundRect(4, 4, 248, 56, 8);
-    ctx.fill();
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillStyle = "#1a1a1a";
-    ctx.font = `500 18px ${font}`;
-    ctx.fillText(r.name, 128, 26);
-    ctx.fillStyle = "#555";
-    ctx.font = `13px ${font}`;
-    ctx.fillText(`${r.w}×${r.l} ft`, 128, 46);
-
-    const tex = new THREE.CanvasTexture(c);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    const label = new THREE.Mesh(
-      new THREE.PlaneGeometry(2.2, 0.55),
-      new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide })
-    );
-    label.position.set(pos.x + pos.w / 2, y0 + pos.h * 0.45, pos.z + pos.l / 2);
-    this.labelGroup.add(label);
+  private removeEntry(id: number) {
+    const entry = this.entries.get(id);
+    if (!entry) return;
+    const b = entry.build;
+    for (const part of [b.structure, b.floorGroup, b.ceiling, b.roof, b.furniture, b.cupboards, b.fixtures]) {
+      part.removeFromParent();
+      disposeGeometry(part);
+    }
+    this.entries.delete(id);
   }
 
-  private addFurniture(r: Room, pos: Box, y0: number) {
-    const wood = new THREE.MeshLambertMaterial({ color: 0xd4a96a });
-    const dark = new THREE.MeshLambertMaterial({ color: 0x8b5e3c });
-    const white = new THREE.MeshLambertMaterial({ color: 0xffffff });
-    const add = (sx: number, sy: number, sz: number, mat: THREE.Material, x: number, y: number, z: number) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, sz), mat);
-      m.position.set(pos.x + x, y0 + y, pos.z + z);
-      m.castShadow = true;
-      this.furnitureGroup.add(m);
-    };
-    const { w, l } = pos;
-
-    if (r.name.includes("Bedroom")) {
-      add(1.8, 0.28, 2.2, wood, w * 0.5, 0.14, l * 0.55); // bed
-      add(1.8, 0.55, 0.25, dark, w * 0.5, 0.42, l * 0.55 - 1.1); // headboard
-      add(0.65, 0.14, 0.55, white, w * 0.5 - 0.5, 0.35, l * 0.55 - 0.75); // pillows
-      add(0.65, 0.14, 0.55, white, w * 0.5 + 0.5, 0.35, l * 0.55 - 0.75);
-      add(0.4, 0.6, 0.4, dark, w * 0.15, 0.3, l * 0.5); // side table
-    }
-    if (r.name === "Living Room") {
-      add(2.4, 0.45, 0.9, wood, w * 0.45, 0.225, l * 0.75); // sofa
-      add(2.4, 0.65, 0.25, dark, w * 0.45, 0.5, l * 0.75 + 0.33);
-      add(1.0, 0.05, 0.6, dark, w * 0.45, 0.38, l * 0.45); // coffee table
-      for (const [dx, dz] of [[-0.42, -0.24], [0.42, -0.24], [-0.42, 0.24], [0.42, 0.24]]) {
-        add(0.06, 0.38, 0.06, dark, w * 0.45 + dx, 0.19, l * 0.45 + dz);
-      }
-      add(1.8, 0.45, 0.4, dark, w * 0.45, 0.225, l * 0.1); // TV unit
-      add(1.4, 0.8, 0.06, new THREE.MeshLambertMaterial({ color: 0x111111 }), w * 0.45, 0.85, l * 0.1);
-    }
-    if (r.name === "Kitchen") {
-      add(w * 0.75, 0.9, 0.55, dark, w * 0.5, 0.45, l * 0.12); // counter
-      add(w * 0.75, 0.05, 0.55, new THREE.MeshLambertMaterial({ color: 0xcccccc }), w * 0.5, 0.925, l * 0.12);
-      add(0.5, 0.12, 0.35, new THREE.MeshLambertMaterial({ color: 0x999999 }), w * 0.7, 0.92, l * 0.12); // sink
-      add(w * 0.75, 0.6, 0.3, dark, w * 0.5, 2.1, l * 0.08); // wall cabinets
-    }
-    if (r.name === "Bathroom") {
-      add(0.45, 0.45, 0.65, white, w * 0.25, 0.225, l * 0.75); // toilet
-      add(0.5, 0.05, 0.35, white, w * 0.7, 0.85, l * 0.25); // basin
-      add(0.5, 0.85, 0.35, new THREE.MeshLambertMaterial({ color: 0xdddddd }), w * 0.7, 0.425, l * 0.25);
-    }
-    if (r.name === "Dining Room") {
-      add(1.8, 0.07, 0.9, dark, w * 0.5, 0.75, l * 0.5); // table
-      for (let ci = 0; ci < 4; ci++) {
-        const cx = ci < 2 ? w * 0.5 + (ci === 0 ? -0.7 : 0.7) : w * 0.5;
-        const cz = ci < 2 ? l * 0.5 : l * 0.5 + (ci === 2 ? -0.55 : 0.55);
-        add(0.42, 0.04, 0.42, wood, cx, 0.46, cz);
-        add(0.42, 0.5, 0.06, wood, cx, 0.71, cz - (ci >= 2 ? (ci === 2 ? -0.18 : 0.18) : 0));
-      }
-    }
+  /** Gathers the walkthrough's collision data from every room. */
+  private collect() {
+    const builds = [...this.entries.values()].map((e) => e.build);
+    this.colliders = builds.flatMap((b) => b.colliders);
+    this.platforms = builds.flatMap((b) => b.platforms);
+    this.doors = builds.flatMap((b) => b.doors);
   }
 
   private applyVisibility() {
     const layers = this.state?.layers;
     if (!layers) return;
-    this.wallGroup.visible = layers.walls;
-    this.floorGroup.visible = layers.floors;
-    this.furnitureGroup.visible = layers.furniture;
-    this.labelGroup.visible = layers.labels;
-    this.grid.visible = layers.grid;
+    const g = this.layerGroups;
+    const viewFloor = this.walking ? null : this.state!.viewFloor;
+    g.structure.visible = this.walking || layers.walls;
+    g.floors.visible = this.walking || layers.floors;
+    g.ceilings.visible = this.walking || layers.roof;
+    g.roofs.visible = this.walking || layers.roof;
+    g.furniture.visible = layers.furniture;
+    g.fixtures.visible = layers.furniture;
+    g.cupboards.visible = layers.furniture || layers.cupboards;
+    this.grid.visible = !this.walking && layers.grid;
+    for (const group of Object.values(g)) {
+      for (const part of group.children) part.visible = viewFloor === null || part.userData.floor <= viewFloor;
+    }
+    // Looking down at one floor: hide its ceiling and roof even with the roof on, so you can see in.
+    if (viewFloor !== null) for (const part of [...g.ceilings.children, ...g.roofs.children]) if (part.userData.floor === viewFloor) part.visible = false;
+    this.invalidate(true);
   }
 
+  /** Outlines the selected room (and the selected piece of furniture) on the floor. */
   private applySelection() {
-    const selected = this.state?.selectedId ?? null;
-    for (const obj of this.floorGroup.children) {
-      const mesh = obj as THREE.Mesh<THREE.BufferGeometry, THREE.MeshLambertMaterial>;
-      mesh.material.opacity = mesh.userData.roomId === selected ? 0.65 : 0.35;
+    disposeGeometry(this.selection);
+    this.selection.clear();
+    const state = this.state;
+    if (!state || this.walking) return;
+    const outline = (x0: number, x1: number, z0: number, z1: number, y: number) => {
+      const mat = new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.9, depthWrite: false });
+      const t = 0.05;
+      const add = (w: number, d: number, x: number, z: number) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, 0.01, d), mat);
+        m.position.set(x, y, z);
+        m.userData.noAO = true;
+        this.selection.add(m);
+      };
+      add(x1 - x0, t, (x0 + x1) / 2, z0 + t / 2);
+      add(x1 - x0, t, (x0 + x1) / 2, z1 - t / 2);
+      add(t, z1 - z0, x0 + t / 2, (z0 + z1) / 2);
+      add(t, z1 - z0, x1 - t / 2, (z0 + z1) / 2);
+    };
+    const room = state.selectedId !== null ? this.entries.get(state.selectedId) : undefined;
+    if (room && (state.viewFloor === null || room.room.floor <= state.viewFloor)) {
+      const b = room.build.bounds;
+      if (!room.room.shape) {
+        outline(b.x0 + 0.06, b.x1 - 0.06, b.z0 + 0.06, b.z1 - 0.06, b.y + 0.012);
+      } else {
+        // A shaped room: a strip along each wall, just inside it
+        const mat = new THREE.MeshBasicMaterial({ color: ACCENT, transparent: true, opacity: 0.9, depthWrite: false });
+        const toWorld = (ftX: number, ftZ: number) => [b.x0 + (ftX - room.room.x) * FT, b.z0 + (ftZ - room.room.z) * FT];
+        for (const e of roomWalls(room.room)) {
+          const inward = e.dir === "n" || e.dir === "w" ? 0.085 : -0.085;
+          const [x0, z0] = e.axis === "x" ? toWorld(e.from, e.at) : toWorld(e.at, e.from);
+          const [x1, z1] = e.axis === "x" ? toWorld(e.to, e.at) : toWorld(e.at, e.to);
+          const m = new THREE.Mesh(new THREE.BoxGeometry(e.axis === "x" ? x1 - x0 : 0.05, 0.01, e.axis === "x" ? 0.05 : z1 - z0), mat);
+          m.position.set((x0 + x1) / 2 + (e.axis === "z" ? inward : 0), b.y + 0.012, (z0 + z1) / 2 + (e.axis === "x" ? inward : 0));
+          m.userData.noAO = true;
+          this.selection.add(m);
+        }
+      }
+    }
+    const sel = state.selectedItem;
+    const itemEntry = sel ? this.entries.get(sel.roomId) : undefined;
+    const item = itemEntry && resolveDesign(itemEntry.room, itemEntry.design).furniture?.find((f) => f.id === sel!.itemId);
+    if (itemEntry && item) {
+      const b = itemEntry.build.bounds;
+      const pos = clampToRoom(itemEntry.room, item, item.x, item.z);
+      const fp = footprint(item.type, item.rot);
+      outline(b.x0 + (pos.x - fp.w / 2) * FT - 0.05, b.x0 + (pos.x + fp.w / 2) * FT + 0.05, b.z0 + (pos.z - fp.l / 2) * FT - 0.05, b.z0 + (pos.z + fp.l / 2) * FT + 0.05, b.y + 0.016);
     }
   }
 
@@ -484,55 +562,88 @@ export class SpacifyScene {
     return rect;
   }
 
+  /** The nearest hit among visible objects (raycasting doesn't skip hidden ones by itself). */
+  private hit(roots: THREE.Object3D[]) {
+    const shown = (o: THREE.Object3D | null): boolean => !o || (o.visible && shown(o.parent));
+    return this.raycaster.intersectObjects(roots, true).find((h) => shown(h.object));
+  }
+
+  /** The furniture item a hit belongs to (its top-level group carries the ids). */
+  private itemOf(object: THREE.Object3D): THREE.Object3D | null {
+    for (let o: THREE.Object3D | null = object; o; o = o.parent) if (o.userData.itemId !== undefined) return o;
+    return null;
+  }
+
   private orbitBy(dx: number, dy: number) {
-    this.spherical.theta -= dx * 0.007;
-    this.spherical.phi = clamp(this.spherical.phi + dy * 0.007, 0.15, Math.PI / 2.1);
-    this.updateCamera();
+    this.goal.theta -= dx * 0.006;
+    this.goal.phi = clamp(this.goal.phi - dy * 0.006, 0.02, Math.PI / 2.05);
+    this.invalidate();
+  }
+
+  private panBy(dx: number, dy: number) {
+    const scale = this.goal.radius * 0.0016;
+    const right = new THREE.Vector3(Math.cos(this.goal.theta), 0, -Math.sin(this.goal.theta));
+    const forward = new THREE.Vector3(-Math.sin(this.goal.theta), 0, -Math.cos(this.goal.theta));
+    this.targetGoal.addScaledVector(right, -dx * scale).addScaledVector(forward, dy * scale);
+    this.invalidate();
   }
 
   private bindInput() {
     const c = this.canvas;
+    this.listen(c, "contextmenu", (e: MouseEvent) => e.preventDefault());
 
     this.listen(c, "mousedown", (e: MouseEvent) => {
       if (this.walking) return;
-      this.dragging = true;
-      this.dragMoved = false;
-      this.lastX = e.clientX;
-      this.lastY = e.clientY;
+      const mode = e.button === 2 || e.shiftKey ? "pan" : "orbit";
+      this.drag = { mode, moved: false, x: e.clientX, y: e.clientY };
+      if (mode === "orbit" && this.state?.editFurniture) this.startItemDrag(e);
     });
-    this.listen(window, "mouseup", () => (this.dragging = false));
+    this.listen(window, "mouseup", (e: MouseEvent) => {
+      const drag = this.drag;
+      this.drag = null;
+      if (!drag || this.walking) return;
+      if (drag.mode === "item") return this.endItemDrag(drag.moved);
+      if (drag.moved || drag.mode === "pan" || e.target !== c) return;
+      // A click: select the room under the pointer
+      this.setPointer(e.clientX, e.clientY);
+      const hit = this.hit([this.layerGroups.floors]);
+      this.handlers.onSelect(hit ? (hit.object.userData.roomId as number) : null);
+      if (this.state?.editFurniture) this.handlers.onSelectItem(null);
+    });
     this.listen(window, "mousemove", (e: MouseEvent) => {
-      if (!this.dragging || this.walking) return;
-      const dx = e.clientX - this.lastX;
-      const dy = e.clientY - this.lastY;
-      if (Math.abs(dx) + Math.abs(dy) > 3) this.dragMoved = true;
-      this.orbitBy(dx, dy);
-      this.lastX = e.clientX;
-      this.lastY = e.clientY;
+      const drag = this.drag;
+      if (!drag || this.walking) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (Math.abs(dx) + Math.abs(dy) > 3) drag.moved = true;
+      if (drag.mode === "item") this.moveItemDrag(e);
+      else if (drag.mode === "pan") this.panBy(dx, dy);
+      else this.orbitBy(dx, dy);
+      drag.x = e.clientX;
+      drag.y = e.clientY;
     });
     this.listen(
       c,
       "wheel",
       (e: WheelEvent) => {
         e.preventDefault();
-        if (!this.walking) this.zoom(e.deltaY * 0.04);
+        if (!this.walking) {
+          this.goal.radius = clamp(this.goal.radius * Math.exp(e.deltaY * 0.0012), MIN_RADIUS, MAX_RADIUS);
+          this.invalidate();
+        }
       },
       { passive: false }
     );
 
     // Touch: one finger orbits, two fingers pinch-zoom
     this.listen(c, "touchstart", (e: TouchEvent) => {
-      if (e.touches.length === 1) {
-        this.dragging = true;
-        this.lastX = e.touches[0].clientX;
-        this.lastY = e.touches[0].clientY;
-      }
+      if (e.touches.length === 1) this.drag = { mode: "orbit", moved: false, x: e.touches[0].clientX, y: e.touches[0].clientY };
       if (e.touches.length === 2) {
+        this.drag = null;
         this.lastPinch = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
       }
     });
     this.listen(c, "touchend", () => {
-      this.dragging = false;
+      this.drag = null;
       this.lastPinch = null;
     });
     this.listen(
@@ -540,39 +651,34 @@ export class SpacifyScene {
       "touchmove",
       (e: TouchEvent) => {
         e.preventDefault();
-        if (e.touches.length === 1 && this.dragging) {
-          this.orbitBy(e.touches[0].clientX - this.lastX, e.touches[0].clientY - this.lastY);
-          this.lastX = e.touches[0].clientX;
-          this.lastY = e.touches[0].clientY;
+        if (e.touches.length === 1 && this.drag) {
+          this.orbitBy(e.touches[0].clientX - this.drag.x, e.touches[0].clientY - this.drag.y);
+          this.drag.x = e.touches[0].clientX;
+          this.drag.y = e.touches[0].clientY;
         }
         if (e.touches.length === 2) {
           const d = Math.hypot(e.touches[0].clientX - e.touches[1].clientX, e.touches[0].clientY - e.touches[1].clientY);
-          if (this.lastPinch) this.zoom(-(d - this.lastPinch) * 0.05);
+          if (this.lastPinch) {
+            this.goal.radius = clamp(this.goal.radius * (this.lastPinch / d), MIN_RADIUS, MAX_RADIUS);
+            this.invalidate();
+          }
           this.lastPinch = d;
         }
       },
       { passive: false }
     );
 
-    // Click a floor to select a room (ignored if the click ended a drag)
-    this.listen(c, "click", (e: MouseEvent) => {
-      if (this.walking || this.dragMoved) return;
-      this.setPointer(e.clientX, e.clientY);
-      const hit = this.raycaster.intersectObjects(this.floorGroup.children, false)[0];
-      this.handlers.onSelect(hit ? (hit.object.userData.roomId as number) : null);
-    });
-
     // Hover tooltip
     this.listen(c, "mousemove", (e: MouseEvent) => {
-      if (!this.tooltip || this.walking) return;
+      if (!this.tooltip || this.walking || this.drag?.moved) return;
       const rect = this.setPointer(e.clientX, e.clientY);
-      const hit = this.raycaster.intersectObjects([...this.floorGroup.children, ...this.wallGroup.children], false)[0];
+      const hit = this.hit([this.layerGroups.floors]);
       const room = hit && this.state?.rooms.find((r) => r.id === hit.object.userData.roomId);
       if (room) {
         this.tooltip.style.opacity = "1";
         this.tooltip.style.left = `${e.clientX - rect.left + 12}px`;
         this.tooltip.style.top = `${e.clientY - rect.top - 28}px`;
-        this.tooltip.textContent = `${room.name} · ${room.w}×${room.l} ft`;
+        this.tooltip.textContent = `${room.name} · ${roomSizeText(room)}`;
       } else {
         this.tooltip.style.opacity = "0";
       }
@@ -584,12 +690,14 @@ export class SpacifyScene {
     // Walkthrough controls
     this.listen(document, "keydown", (e: KeyboardEvent) => {
       if (!this.walking) return;
-      this.walkKeys[e.code] = true;
+      this.keys[e.code] = true;
       if (e.code === "Escape") this.stopWalkFromInside();
+      if (e.code.startsWith("Arrow") || e.code === "Space") e.preventDefault();
     });
     this.listen(document, "keyup", (e: KeyboardEvent) => {
-      this.walkKeys[e.code] = false;
+      this.keys[e.code] = false;
     });
+    this.listen(window, "blur", () => (this.keys = {}));
     this.listen(document, "pointerlockchange", () => {
       if (document.pointerLockElement === this.canvas) {
         this.hadPointerLock = true;
@@ -602,30 +710,213 @@ export class SpacifyScene {
       if (!this.walking || document.pointerLockElement !== this.canvas) return;
       // Chrome can report one huge jump right after the pointer locks; ignore spikes like that.
       if (Math.abs(e.movementX) > 150 || Math.abs(e.movementY) > 150) return;
-      this.walkYaw -= e.movementX * 0.002;
-      this.walkPitch = clamp(this.walkPitch - e.movementY * 0.002, -Math.PI / 2.5, Math.PI / 2.5);
+      this.yaw -= e.movementX * 0.0022;
+      this.pitch = clamp(this.pitch - e.movementY * 0.0022, -1.35, 1.35);
     });
   }
+
+  // ─── Dragging furniture ────────────────────────────────────
+
+  private startItemDrag(e: MouseEvent) {
+    this.setPointer(e.clientX, e.clientY);
+    const g = this.layerGroups;
+    const hit = this.hit([g.furniture, g.cupboards]);
+    const object = hit && this.itemOf(hit.object);
+    if (!hit || !object || !this.drag) return;
+    const ref = { roomId: object.userData.roomId as number, itemId: object.userData.itemId as number };
+    const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -object.position.y);
+    const onPlane = new THREE.Vector3();
+    this.raycaster.ray.intersectPlane(plane, onPlane);
+    this.drag.mode = "item";
+    this.itemDrag = { ref, object, plane, offset: object.position.clone().sub(onPlane), x: 0, z: 0 };
+    this.handlers.onSelectItem(ref);
+  }
+
+  private moveItemDrag(e: MouseEvent) {
+    const d = this.itemDrag;
+    const entry = d && this.entries.get(d.ref.roomId);
+    const item = entry && resolveDesign(entry.room, entry.design).furniture?.find((f) => f.id === d!.ref.itemId);
+    if (!d || !entry || !item) return;
+    this.setPointer(e.clientX, e.clientY);
+    const p = new THREE.Vector3();
+    if (!this.raycaster.ray.intersectPlane(d.plane, p)) return;
+    p.add(d.offset);
+    const b = entry.build.bounds;
+    const pos = clampToRoom(entry.room, item, (p.x - b.x0) / FT, (p.z - b.z0) / FT);
+    d.x = pos.x;
+    d.z = pos.z;
+    d.object.position.set(b.x0 + pos.x * FT, b.y, b.z0 + pos.z * FT);
+    this.invalidate(true);
+  }
+
+  private endItemDrag(moved: boolean) {
+    const d = this.itemDrag;
+    this.itemDrag = null;
+    if (d && moved) this.handlers.onMoveItem(d.ref, d.x, d.z);
+  }
+
+  // ─── Walkthrough ───────────────────────────────────────────
 
   private stopWalkFromInside() {
     this.exitWalk();
     this.handlers.onWalkExit();
   }
 
-  private stepWalk() {
-    const k = this.walkKeys;
-    const speed = k.ShiftLeft || k.ShiftRight ? 0.12 : 0.05;
-    const dir = new THREE.Vector3(
-      Math.sin(this.walkYaw) * Math.cos(this.walkPitch),
-      Math.sin(this.walkPitch),
-      Math.cos(this.walkYaw) * Math.cos(this.walkPitch)
-    );
-    const right = new THREE.Vector3(-Math.cos(this.walkYaw), 0, Math.sin(this.walkYaw));
-    if (k.KeyW || k.ArrowUp) this.walkPos.addScaledVector(dir, speed);
-    if (k.KeyS || k.ArrowDown) this.walkPos.addScaledVector(dir, -speed);
-    if (k.KeyA || k.ArrowLeft) this.walkPos.addScaledVector(right, -speed);
-    if (k.KeyD || k.ArrowRight) this.walkPos.addScaledVector(right, speed);
-    this.walkCamera.position.copy(this.walkPos);
-    this.walkCamera.lookAt(this.walkPos.clone().add(dir));
+  private spawn(roomId: number | null) {
+    const entries = [...this.entries.values()];
+    const entry =
+      (roomId !== null && this.entries.get(roomId)) ||
+      entries.find((e) => /living|drawing/i.test(e.room.name) && e.room.floor === 1) ||
+      entries.find((e) => e.room.floor === 1) ||
+      entries[0];
+    if (!entry) return;
+    const b = entry.build.bounds;
+    const centre = new THREE.Vector3((b.x0 + b.x1) / 2, b.y, (b.z0 + b.z1) / 2);
+    const door = entry.build.doors[0];
+    let start = centre.clone();
+    let look = new THREE.Vector3(0, 0, -1);
+    if (door) {
+      const toCentre = centre.clone().sub(new THREE.Vector3(door.x, b.y, door.z)).setY(0);
+      if (toCentre.lengthSq() > 0.01) {
+        look = toCentre.normalize();
+        start = new THREE.Vector3(door.x, b.y, door.z).addScaledVector(look, 0.9);
+      }
+    }
+    this.feet.copy(start);
+    this.resolve(this.feet);
+    this.velocity.set(0, 0, 0);
+    this.fall = 0;
+    this.eyeY = this.feet.y + EYE;
+    this.yaw = Math.atan2(-look.x, -look.z);
+    this.pitch = -0.05;
+    this.currentRoom = null;
+    this.frames = this.slowFrames = 0;
+    this.setCamera(this.walkCamera);
+  }
+
+  /** Pushes a body standing at `p` (feet) out of anything solid at its height. */
+  private resolve(p: THREE.Vector3) {
+    for (let iter = 0; iter < 4; iter++) {
+      let pushed = false;
+      for (const c of this.colliders) {
+        if (c.y1 <= p.y + STEP_UP || c.y0 >= p.y + BODY) continue;
+        const cx = clamp(p.x, c.x0, c.x1), cz = clamp(p.z, c.z0, c.z1);
+        const dx = p.x - cx, dz = p.z - cz;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= RADIUS * RADIUS) continue;
+        if (d2 > 1e-8) {
+          const d = Math.sqrt(d2);
+          p.x += (dx / d) * (RADIUS - d);
+          p.z += (dz / d) * (RADIUS - d);
+        } else {
+          // Centre is inside the box: leave by the nearest side
+          const out = [p.x - c.x0 + RADIUS, c.x1 - p.x + RADIUS, p.z - c.z0 + RADIUS, c.z1 - p.z + RADIUS];
+          const i = out.indexOf(Math.min(...out));
+          if (i === 0) p.x -= out[0];
+          else if (i === 1) p.x += out[1];
+          else if (i === 2) p.z -= out[2];
+          else p.z += out[3];
+        }
+        pushed = true;
+      }
+      if (!pushed) break;
+    }
+    p.x = clamp(p.x, this.plotBounds.x0, this.plotBounds.x1);
+    p.z = clamp(p.z, this.plotBounds.z0, this.plotBounds.z1);
+  }
+
+  /** The highest surface under (x, z) that a body with its feet at `y` can stand on. */
+  private groundAt(x: number, z: number, y: number) {
+    let best = 0;
+    for (const p of this.platforms) {
+      if (x >= p.x0 && x <= p.x1 && z >= p.z0 && z <= p.z1 && p.y <= y + STEP_UP && p.y > best) best = p.y;
+    }
+    return best;
+  }
+
+  private stepWalk(dt: number) {
+    const k = this.keys;
+    const forward = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    const right = new THREE.Vector3(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const wish = new THREE.Vector3();
+    if (k.KeyW || k.ArrowUp) wish.add(forward);
+    if (k.KeyS || k.ArrowDown) wish.sub(forward);
+    if (k.KeyD || k.ArrowRight) wish.add(right);
+    if (k.KeyA || k.ArrowLeft) wish.sub(right);
+    const speed = k.ShiftLeft || k.ShiftRight ? RUN_SPEED : WALK_SPEED;
+    if (wish.lengthSq() > 0) wish.normalize().multiplyScalar(speed);
+    this.velocity.lerp(wish, damp(dt, wish.lengthSq() > 0 ? 10 : 12));
+
+    const next = this.feet.clone().addScaledVector(this.velocity, dt);
+    this.resolve(next);
+    // Gravity, and stepping up stairs
+    const ground = this.groundAt(next.x, next.z, next.y);
+    if (next.y > ground + 0.001) {
+      this.fall += 9.8 * dt;
+      next.y = Math.max(ground, next.y - this.fall * dt);
+    } else {
+      this.fall = 0;
+      next.y = ground;
+    }
+    const moved = Math.hypot(next.x - this.feet.x, next.z - this.feet.z);
+    this.feet.copy(next);
+
+    // Eye height eases over steps; a gentle bob while walking
+    this.stride += moved * 5.2;
+    const bob = Math.sin(this.stride) * 0.025 * Math.min(1, this.velocity.length() / WALK_SPEED);
+    this.eyeY += (this.feet.y + EYE - this.eyeY) * damp(dt, 14);
+    this.walkCamera.position.set(this.feet.x, this.eyeY + bob, this.feet.z);
+    this.walkCamera.rotation.order = "YXZ";
+    this.walkCamera.rotation.set(this.pitch, this.yaw, 0);
+
+    this.updateDoors(dt);
+    this.updateIndoorLight(dt);
+  }
+
+  private setDoor(d: DoorRig, open: number) {
+    d.open = open;
+    const ease = open * open * (3 - 2 * open);
+    for (const leaf of d.leaves) leaf.pivot.rotation.y = leaf.sign * ease * 1.6;
+  }
+
+  /** Doors swing open as you come near and close behind you. */
+  private updateDoors(dt: number) {
+    let moving = false;
+    for (const d of this.doors) {
+      const near = Math.abs(d.y - this.feet.y) < 1.2 && Math.hypot(d.x - this.feet.x, d.z - this.feet.z) < 1.9;
+      const goal = near ? 1 : 0;
+      if (Math.abs(goal - d.open) < 0.001) continue;
+      this.setDoor(d, clamp(d.open + Math.sign(goal - d.open) * dt * 1.8, 0, 1));
+      moving = true;
+    }
+    if (moving) this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  /** Indoors: the room's ceiling light comes on, the sky light drops and the eye adapts. */
+  private updateIndoorLight(dt: number) {
+    const f = this.feet;
+    let inside: Entry | null = null;
+    for (const e of this.entries.values()) {
+      const b = e.build.bounds;
+      if (Math.abs(f.y - b.y) < 1.3 && e.build.rects.some((q) => f.x >= q.x0 && f.x <= q.x1 && f.z >= q.z0 && f.z <= q.z1)) inside = e;
+    }
+    const id = inside?.room.id ?? null;
+    if (id !== this.currentRoom) {
+      this.currentRoom = id;
+      if (inside) {
+        this.roomLight.position.copy(inside.build.lamp);
+        this.roomLight.visible = true;
+        this.roomLight.intensity = 0;
+        this.renderer.shadowMap.needsUpdate = true;
+      }
+    }
+    const goalLight = inside ? 9 : 0;
+    this.roomLight.intensity += (goalLight - this.roomLight.intensity) * damp(dt, 4);
+    if (!inside && this.roomLight.intensity < 0.05) this.roomLight.visible = false;
+    const goalEnv = inside ? ENV_INDOOR : ENV_OUTDOOR;
+    this.scene.environmentIntensity += (goalEnv - this.scene.environmentIntensity) * damp(dt, 3);
+    const goalExposure = inside ? 1.45 : 1;
+    this.exposure += (goalExposure - this.exposure) * damp(dt, 1.5);
+    this.renderer.toneMappingExposure = this.exposure;
   }
 }

@@ -6,7 +6,6 @@ import { BANDS, applyPrefs, conceptFromBands, floorRooms, realize, usualBand, ty
 import { PREF_KEYS, PREF_TEXT, mergePrefs, readNotes, type PrefKey, type Prefs } from "@/lib/planNotes";
 import { RULE_TEXT, type Violation } from "@/lib/planRules";
 import { HOME_TYPE_LABELS } from "@/lib/start";
-import { OLLAMA_DEFAULTS } from "./ollama";
 
 /**
  * Asks a local text model (Ollama, free, on this machine) where the rooms should go. It never draws coordinates;
@@ -33,7 +32,7 @@ import { OLLAMA_DEFAULTS } from "./ollama";
  *   npm run ai:setup           # optional: bakes the guide into a "spacify-planner" model
  */
 
-export const PLAN_AI_DEFAULTS = { model: "qwen2.5:3b", timeoutMs: 120_000 };
+export const PLAN_AI_DEFAULTS = { url: "http://localhost:11434", model: "qwen2.5:3b", timeoutMs: 120_000 };
 
 const SKILL_PATH = path.join(process.cwd(), "lib/server/skills/floor-planning.md");
 let skill: string | null = null;
@@ -67,7 +66,7 @@ export type AiPlan = {
 
 function settings() {
   return {
-    url: (process.env.OLLAMA_URL || OLLAMA_DEFAULTS.url).replace(/\/+$/, ""),
+    url: (process.env.OLLAMA_URL || PLAN_AI_DEFAULTS.url).replace(/\/+$/, ""),
     model: process.env.OLLAMA_PLAN_MODEL || PLAN_AI_DEFAULTS.model,
     timeoutMs: Number(process.env.PLAN_AI_TIMEOUT_MS) || PLAN_AI_DEFAULTS.timeoutMs,
   };

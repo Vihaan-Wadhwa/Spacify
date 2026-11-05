@@ -1,7 +1,7 @@
 import "server-only";
 import type { Pool, PoolClient } from "pg";
 import type { Access, ProjectInput, ProjectListItem, SaveResult, SavedProject } from "@/lib/projects";
-import type { Opening, Room } from "@/lib/rooms";
+import { roomArea, type Opening, type Room } from "@/lib/rooms";
 import { getPool, query, withTransaction } from "./db";
 import { HttpError } from "./errors";
 
@@ -27,11 +27,12 @@ type RoomRow = {
   floor: number;
   position_x: number;
   position_z: number;
+  shape: [number, number][] | null;
 };
 
 type OpeningRow = { id: number; room_id: number; kind: Opening["kind"]; wall: Opening["wall"]; wall_offset: number; width: number };
 
-const ROOM_COLUMNS = "id, room_type, width, length, height, floor, position_x, position_z";
+const ROOM_COLUMNS = "id, room_type, width, length, height, floor, position_x, position_z, shape";
 
 const toRoom = (r: RoomRow, openings: Opening[] = []): Room => ({
   id: r.id,
@@ -42,6 +43,7 @@ const toRoom = (r: RoomRow, openings: Opening[] = []): Room => ({
   floor: r.floor,
   x: r.position_x,
   z: r.position_z,
+  ...(r.shape && { shape: r.shape }),
   openings,
 });
 
@@ -139,18 +141,21 @@ async function syncRooms(client: PoolClient, projectId: number, rooms: ProjectIn
 
   const idMap: Record<number, number> = {};
   for (const r of rooms) {
-    const values = [r.name, r.w, r.l, r.h, r.floor, r.x, r.z];
+    // A shaped room also stores its outline and real floor area (the trigger sums areas into projects.total_area).
+    const shaped = r.shape ? { shape: JSON.stringify(r.shape), area: Math.round(roomArea({ ...r, x: 0, z: 0 }) * 100) / 100 } : { shape: null, area: null };
+    const values = [r.name, r.w, r.l, r.h, r.floor, r.x, r.z, shaped.shape, shaped.area];
     if (existingIds.has(r.id)) {
       await client.query(
-        `UPDATE rooms SET room_type = $1, width = $2, length = $3, height = $4, floor = $5, position_x = $6, position_z = $7
-          WHERE id = $8 AND project_id = $9`,
+        `UPDATE rooms SET room_type = $1, width = $2, length = $3, height = $4, floor = $5, position_x = $6, position_z = $7,
+                          shape = $8, area = $9
+          WHERE id = $10 AND project_id = $11`,
         [...values, r.id, projectId]
       );
       idMap[r.id] = r.id;
     } else {
       const { rows } = await client.query<{ id: number }>(
-        `INSERT INTO rooms (room_type, width, length, height, floor, position_x, position_z, project_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+        `INSERT INTO rooms (room_type, width, length, height, floor, position_x, position_z, shape, area, project_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING id`,
         [...values, projectId]
       );
       idMap[r.id] = rows[0].id;

@@ -42,7 +42,10 @@ CREATE TABLE rooms (
   height      NUMERIC(10,2) NOT NULL DEFAULT 10 CHECK (height BETWEEN 7 AND 20),
   floor       INT           NOT NULL DEFAULT 1  CHECK (floor BETWEEN 1 AND 3),
   position_x  NUMERIC(10,2) NOT NULL DEFAULT 0,   -- north-west corner on the 2D plan (x east, z south)
-  position_z  NUMERIC(10,2) NOT NULL DEFAULT 0
+  position_z  NUMERIC(10,2) NOT NULL DEFAULT 0,
+  -- Not a rectangle (L, T, U…): its corners, clockwise, as [x, z] fractions of width and length. NULL = rectangle.
+  shape       JSONB,
+  area        NUMERIC(10,2) CHECK (area > 0)      -- real floor area of a shaped room; NULL = width × length
 );
 CREATE INDEX idx_rooms_project ON rooms(project_id);
 
@@ -109,13 +112,15 @@ CREATE TABLE shared_projects (
 );
 CREATE INDEX idx_shared_projects_user ON shared_projects(shared_with);
 
--- ─── 9. openings (doors and windows in a room's walls) ───────────────
+-- ─── 9. openings (doors, windows and open gaps in a room's walls) ─────
+-- 'open' is a gap with no door: a doorless passage, or a removed wall when it spans a whole shared wall.
 -- Not in the original report: added with the 2D plan editor. db/upgrade.sql adds it to older databases.
 CREATE TABLE openings (
   id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   room_id      INT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  kind         VARCHAR(10)   NOT NULL CHECK (kind IN ('door', 'window')),
-  wall         CHAR(1)       NOT NULL CHECK (wall IN ('n', 'e', 's', 'w')),
+  kind         VARCHAR(10)   NOT NULL CONSTRAINT openings_kind_check CHECK (kind IN ('door', 'window', 'open')),
+  -- n/e/s/w for a rectangle's walls; a shaped room's walls are numbered 0, 1, … clockwise
+  wall         VARCHAR(2)    NOT NULL CONSTRAINT openings_wall_check CHECK (wall ~ '^([nesw]|[0-9]{1,2})$'),
   wall_offset  NUMERIC(10,2) NOT NULL CHECK (wall_offset >= 0),  -- from the wall's west/north end to the opening
   width        NUMERIC(10,2) NOT NULL CHECK (width > 0 AND width <= 40)
 );
@@ -137,26 +142,26 @@ CREATE TRIGGER trg_projects_updated_at
 BEFORE UPDATE ON projects
 FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
--- T2. projects.total_area = SUM(width × length) of its rooms, recomputed
+-- T2. projects.total_area = SUM of its rooms' areas (width × length, or a shaped room's own area), recomputed
 --     whenever a room is inserted, resized, moved to another project or deleted.
 --     (The UPDATE on projects also fires T1, so updated_at moves too.)
 CREATE FUNCTION refresh_total_area() RETURNS trigger AS $$
 BEGIN
   IF TG_OP IN ('UPDATE', 'DELETE') THEN
     UPDATE projects
-       SET total_area = (SELECT COALESCE(SUM(width * length), 0) FROM rooms WHERE project_id = OLD.project_id)
+       SET total_area = (SELECT COALESCE(SUM(COALESCE(area, width * length)), 0) FROM rooms WHERE project_id = OLD.project_id)
      WHERE id = OLD.project_id;
   END IF;
   IF TG_OP IN ('INSERT', 'UPDATE') AND (TG_OP = 'INSERT' OR NEW.project_id IS DISTINCT FROM OLD.project_id) THEN
     UPDATE projects
-       SET total_area = (SELECT COALESCE(SUM(width * length), 0) FROM rooms WHERE project_id = NEW.project_id)
+       SET total_area = (SELECT COALESCE(SUM(COALESCE(area, width * length)), 0) FROM rooms WHERE project_id = NEW.project_id)
      WHERE id = NEW.project_id;
   END IF;
   RETURN NULL;
 END $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_rooms_total_area
-AFTER INSERT OR UPDATE OF width, length, project_id OR DELETE ON rooms
+AFTER INSERT OR UPDATE OF width, length, area, project_id OR DELETE ON rooms
 FOR EACH ROW EXECUTE FUNCTION refresh_total_area();
 
 -- T3. A project can't be shared with its own owner.

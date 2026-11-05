@@ -5,9 +5,19 @@ import { AskForm } from "@/components/landing/AskForm";
 import { AxoDrawing, KitchenGlyph, PlanDrawing, SketchDrawing } from "@/components/landing/Drawings";
 import { HeroMind } from "@/components/landing/HeroMind";
 import { GoldVeins } from "@/components/start/GoldVeins";
-import { CEILING_TYPES, FLOOR_OPTIONS, KITCHEN_LAYOUTS, KITCHEN_LAYOUT_LABELS, WALL_FINISHES, WALL_FINISH_LABELS } from "@/lib/rooms";
+import { CEILING_TYPES, KITCHEN_LAYOUTS, KITCHEN_LAYOUT_LABELS, WALL_FINISHES, WALL_FINISH_LABELS } from "@/lib/rooms";
 import { getCurrentUser } from "@/lib/server/currentUser";
 import "./landing.css";
+
+/** The landing's flooring strip: one slab per drawing in public/finishes. */
+const LANDING_FLOORS = [
+  { name: "White Marble", color: "#f0eeea" },
+  { name: "Beige Tiles", color: "#d4c9b0" },
+  { name: "Dark Wood", color: "#5c3d1e" },
+  { name: "Light Wood", color: "#c8a46e" },
+  { name: "Grey Granite", color: "#9e9e9e" },
+  { name: "Vitrified", color: "#dde0e3" },
+];
 
 const CEILING_LABELS: Record<string, string> = { plain: "Plain", pop: "POP", gypsum: "Gypsum", wood: "Wood" };
 
@@ -104,7 +114,7 @@ export default async function LandingPage() {
           <h2 id="finishes-title">Pick the floor before you pour it</h2>
           <p className="lp-lede">Set flooring, walls, ceilings and the kitchen room by room, and see each choice in 3D straight away.</p>
           <ul className="lp-slabs" aria-label="Flooring">
-            {FLOOR_OPTIONS.map((f) => (
+            {LANDING_FLOORS.map((f) => (
               <li key={f.name} style={{ "--slab": f.color, "--tex": `url(/finishes/${f.name.toLowerCase().replace(/ /g, "-")}.svg)` } as React.CSSProperties}>
                 <span className="lp-slab-name">{f.name}</span>
               </li>

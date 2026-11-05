@@ -37,7 +37,7 @@ export function UploadFlow({ showEmptyState, inputRef, onAccept, onShowTutorial,
       const res = await fetch("/api/sketch", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image: image.base64, mimeType: image.mimeType }),
+        body: JSON.stringify({ image: image.base64, mimeType: image.mimeType, width: image.width, height: image.height }),
       });
       const data = (await res.json()) as { rooms?: RoomDraft[]; error?: string };
       if (res.ok && data.rooms?.length) setState({ kind: "found", preview: image.dataUrl, rooms: data.rooms });
@@ -123,7 +123,7 @@ export function UploadFlow({ showEmptyState, inputRef, onAccept, onShowTutorial,
   );
 }
 
-/** Spinner with a seconds counter — a local model can take a minute, so show that it's still working. */
+/** Spinner with a seconds counter — a busy sketch can take a while, so show that it's still working. */
 function AnalysingStatus() {
   const [seconds, setSeconds] = useState(0);
   useEffect(() => {
@@ -136,7 +136,7 @@ function AnalysingStatus() {
         <span className="spinner">◌</span>
         <span>Analysing your sketch with AI... {seconds > 0 && `${seconds}s`}</span>
       </div>
-      {seconds >= 10 && <p className="hint">A local model can take up to a minute or two, especially on the first upload while it loads.</p>}
+      {seconds >= 15 && <p className="hint">Busy sketches can take up to a minute.</p>}
     </div>
   );
 }

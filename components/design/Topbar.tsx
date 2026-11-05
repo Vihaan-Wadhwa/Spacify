@@ -7,9 +7,9 @@ import { loginPath, type CurrentUser } from "@/lib/auth";
 import type { StudioTab } from "@/lib/rooms";
 
 const TABS: { id: StudioTab; label: string }[] = [
-  { id: "model", label: "3D Model" },
-  { id: "plan", label: "Floor Plan" },
-  { id: "ai", label: "AI Assistant" },
+  { id: "floor", label: "Floor Plan" },
+  { id: "interior", label: "Interior Design" },
+  { id: "architecture", label: "Architecture" },
 ];
 
 export type SaveState = "unsaved" | "saving" | "saved" | "readonly";
@@ -26,14 +26,12 @@ type Props = {
   user: CurrentUser | null;
   tab: StudioTab;
   onTab: (tab: StudioTab) => void;
-  walking: boolean;
-  designOpen: boolean;
+  aiOpen: boolean;
   projectName: string;
   saveState: SaveState;
   onProjectName: (name: string) => void;
   onTogglePanel: () => void;
-  onWalkthrough: () => void;
-  onToggleDesign: () => void;
+  onToggleAi: () => void;
   onExport: () => void;
   onSave: () => void;
 };
@@ -48,19 +46,23 @@ export function Topbar(p: Props) {
         </Link>
         <Link href="/projects" className="topbar-link">My projects</Link>
       </div>
-      <nav className="topbar-center" aria-label="Views">
+      <nav className="topbar-center" aria-label="Panels">
         {TABS.map((t) => (
-          <button key={t.id} className={`tab-btn${p.tab === t.id ? " active" : ""}`} onClick={() => p.onTab(t.id)}>
+          <button
+            key={t.id}
+            className={`tab-btn${p.tab === t.id && !p.aiOpen ? " active" : ""}`}
+            aria-current={p.tab === t.id && !p.aiOpen ? "page" : undefined}
+            onClick={() => p.onTab(t.id)}
+          >
             {t.label}
           </button>
         ))}
       </nav>
       <div className="topbar-right">
-        <button className="icon-btn" title="Toggle panel" aria-label="Toggle rooms panel" onClick={p.onTogglePanel}>☰</button>
+        <button className="icon-btn" title="Toggle side panel" aria-label="Toggle side panel" onClick={p.onTogglePanel}>☰</button>
         <ThemeToggleButton className="icon-btn" />
-        <button className={`icon-btn${p.walking ? " active" : ""}`} title="Walkthrough mode (WASD)" aria-label="Walkthrough mode" onClick={p.onWalkthrough}>⊕</button>
-        <button className={`icon-btn${p.designOpen ? " active" : ""}`} title="Room design" aria-label="Room design" onClick={p.onToggleDesign}>◈</button>
-        <button className="icon-btn" title="Export PNG" aria-label="Export 3D view as PNG" onClick={p.onExport}>↑</button>
+        <button className={`icon-btn${p.aiOpen ? " active" : ""}`} title="AI assistant" aria-label="AI assistant" aria-pressed={p.aiOpen} onClick={p.onToggleAi}>✦</button>
+        <button className="icon-btn" title="Export 3D view as PNG" aria-label="Export 3D view as PNG" onClick={p.onExport}>↑</button>
         <input
           className="project-name"
           aria-label="Project name"
