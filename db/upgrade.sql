@@ -5,7 +5,7 @@
 CREATE TABLE openings (
   id           INT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   room_id      INT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  kind         VARCHAR(10)   NOT NULL CHECK (kind IN ('door', 'window')),
+  kind         VARCHAR(10)   NOT NULL CONSTRAINT openings_kind_check CHECK (kind IN ('door', 'window', 'open')),
   wall         CHAR(1)       NOT NULL CHECK (wall IN ('n', 'e', 's', 'w')),
   wall_offset  NUMERIC(10,2) NOT NULL CHECK (wall_offset >= 0),
   width        NUMERIC(10,2) NOT NULL CHECK (width > 0 AND width <= 40)

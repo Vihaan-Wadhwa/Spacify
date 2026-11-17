@@ -1,18 +1,31 @@
 // The 2D floor plan: drawing it, plus the geometry the editor needs (hit testing, snapping, placing doors/windows).
 // Plan coordinates are feet (x east, z south); a Viewport maps them to CSS pixels on the canvas.
 
+import { footprint, itemRect } from "@/lib/furniture";
 import {
+  DOOR_WIDTHS,
+  FURNITURE,
+  OPENING_SIZE,
   ROOM_SIZE,
-  WALLS,
+  doorPartner,
   fitOpenings,
+  isSecondLeaf,
   overlappingIds,
   planBounds,
+  pointInRoom,
+  roomCentre,
   roomColor,
+  roomSizeText,
+  roomWalls,
+  shapeCorners,
+  wallEdge,
   wallLength,
   wallLine,
+  type FurnitureItem,
   type Opening,
   type Room,
   type Wall,
+  type WallKey,
 } from "@/lib/rooms";
 
 /** A plan point (feet) is drawn at (ox + x·scale, oy + z·scale) CSS pixels. */
@@ -27,6 +40,9 @@ export const GRID = 0.5;
 export type Handle = "n" | "s" | "e" | "w" | "ne" | "nw" | "se" | "sw";
 
 export type OpeningRef = { roomId: number; openingId: number };
+export type ItemRef = { roomId: number; itemId: number };
+/** One room's furniture, as drawn on the plan. */
+export type RoomFurniture = { room: Room; items: FurnitureItem[] };
 
 /** A line a dragged room snapped to: vertical (x = at) or horizontal (z = at). */
 export type Guide = { orient: "v" | "h"; at: number };
@@ -37,6 +53,9 @@ export type PlanOverlay = {
   /** Faint preview of a door or window about to be placed. */
   ghost: { room: Room; opening: Opening } | null;
   guides: Guide[];
+  /** Furniture to draw (null hides it). */
+  furniture: RoomFurniture[] | null;
+  selectedItem: ItemRef | null;
   /** false for the exported PNG: no grid, selection, guides or ghost. */
   interactive: boolean;
 };
@@ -63,7 +82,7 @@ export function fitViewport(rooms: Room[], width: number, height: number): Viewp
 const INWARD: Record<Wall, { x: number; z: number }> = { n: { x: 0, z: 1 }, s: { x: 0, z: -1 }, w: { x: 1, z: 0 }, e: { x: -1, z: 0 } };
 
 /** The two ends of an opening (or any stretch of a wall) in plan coordinates. */
-function wallPoints(room: Room, wall: Wall, offset: number, width: number) {
+function wallPoints(room: Room, wall: WallKey, offset: number, width: number) {
   const line = wallLine(room, wall);
   const a = line.from + offset;
   const b = a + width;
@@ -113,20 +132,32 @@ export function openingAt(rooms: Room[], x: number, z: number, tol: number, pref
 
 /** The room under a point: `preferId` if it's one of them, otherwise the one drawn last (on top). */
 export function roomAt(rooms: Room[], x: number, z: number, preferId: number | null): Room | null {
-  const hits = rooms.filter((r) => x >= r.x && x <= r.x + r.w && z >= r.z && z <= r.z + r.l);
+  const hits = rooms.filter((r) => pointInRoom(r, x, z));
   return hits.find((r) => r.id === preferId) ?? hits.at(-1) ?? null;
+}
+
+/** The piece of furniture under a point, if any (the selected one first, then the one drawn last). */
+export function furnitureAt(furniture: RoomFurniture[], x: number, z: number, prefer: ItemRef | null): { room: Room; item: FurnitureItem } | null {
+  const hits: { room: Room; item: FurnitureItem }[] = [];
+  for (const { room, items } of furniture) {
+    for (const item of items) {
+      const r = itemRect(item);
+      if (x >= room.x + r.x0 && x <= room.x + r.x1 && z >= room.z + r.z0 && z <= room.z + r.z1) hits.push({ room, item });
+    }
+  }
+  return hits.find((h) => prefer && h.room.id === prefer.roomId && h.item.id === prefer.itemId) ?? hits.at(-1) ?? null;
 }
 
 /**
  * The wall nearest a point, within `tol` feet. Where two rooms share a wall, the room the point is inside wins,
  * so a door swings into the room you clicked from. `along` is how far along the wall (feet from its start) the point is.
  */
-export function nearestWall(rooms: Room[], x: number, z: number, tol: number): { room: Room; wall: Wall; along: number } | null {
-  let best: { room: Room; wall: Wall; along: number; score: number } | null = null;
+export function nearestWall(rooms: Room[], x: number, z: number, tol: number): { room: Room; wall: WallKey; along: number } | null {
+  let best: { room: Room; wall: WallKey; along: number; score: number } | null = null;
   for (const room of rooms) {
-    const inside = x >= room.x && x <= room.x + room.w && z >= room.z && z <= room.z + room.l;
-    for (const wall of WALLS) {
-      const line = wallLine(room, wall);
+    const inside = pointInRoom(room, x, z);
+    for (const line of roomWalls(room)) {
+      const wall = line.key;
       const [a, b] = wallPoints(room, wall, 0, wallLength(room, wall));
       const d = distToSegment(x, z, a, b);
       if (d > tol) continue;
@@ -140,8 +171,79 @@ export function nearestWall(rooms: Room[], x: number, z: number, tol: number): {
   return best && { room: best.room, wall: best.wall, along: best.along };
 }
 
+/**
+ * The whole unit an opening belongs to, in feet along its wall: a double door's two leaves together, otherwise just
+ * the opening. `ids` lists the unit's openings, first leaf first.
+ */
+export function openingUnit(room: Room, o: Opening): { offset: number; width: number; ids: number[] } {
+  const first = isSecondLeaf(room.openings, o) ? room.openings.find((p) => doorPartner(room.openings, p)?.id === o.id) : undefined;
+  const lead = first ?? o;
+  const partner = doorPartner(room.openings, lead);
+  return partner ? { offset: lead.offset, width: lead.width + partner.width, ids: [lead.id, partner.id] } : { offset: o.offset, width: o.width, ids: [o.id] };
+}
+
+/** Which end handle of a selected opening's unit is under a point (within `tol` feet), if either. */
+export function openingHandleAt(room: Room, o: Opening, x: number, z: number, tol: number): "start" | "end" | null {
+  const unit = openingUnit(room, o);
+  const [a, b] = wallPoints(room, o.wall, unit.offset, unit.width);
+  if (Math.hypot(a.x - x, a.z - z) <= tol) return "start";
+  if (Math.hypot(b.x - x, b.z - z) <= tol) return "end";
+  return null;
+}
+
+/** How far along `room`'s `wall` (feet from its start) a point is, ignoring how far off the wall it is. */
+export function alongWall(room: Room, wall: WallKey, x: number, z: number) {
+  const line = wallLine(room, wall);
+  return clamp((line.axis === "x" ? x : z) - line.from, 0, line.to - line.from);
+}
+
+/**
+ * Drags one end of an opening's unit to `along` (feet along its wall), keeping the other end where it is.
+ * Windows and open gaps stretch freely (on the grid, within their size limits and the wall). Doors snap to the two
+ * door sizes: a single door, or a double door of two leaves, whichever the pointer is nearer.
+ * Returns the room's new openings and the id to keep selected.
+ */
+export function dragOpeningEnd(room: Room, o: Opening, end: "start" | "end", along: number): { openings: Opening[]; selectId: number } {
+  const len = wallLength(room, o.wall);
+  const unit = openingUnit(room, o);
+  const fixed = end === "end" ? unit.offset : unit.offset + unit.width;
+  const pointer = clamp(snapToGrid(along), 0, len);
+  const others = room.openings.filter((x) => !unit.ids.includes(x.id));
+  const space = end === "end" ? len - fixed : fixed; // room to grow away from the fixed end
+
+  if (o.kind !== "door") {
+    const { min, max } = OPENING_SIZE[o.kind];
+    const width = clamp(Math.abs(pointer - fixed), Math.min(min, space), Math.min(max, space));
+    return { openings: [...others, { ...o, offset: end === "end" ? fixed : fixed - width, width }], selectId: o.id };
+  }
+
+  const wantDouble = Math.abs(pointer - fixed) >= (DOOR_WIDTHS.single + DOOR_WIDTHS.double) / 2;
+  const total = wantDouble && space >= DOOR_WIDTHS.double ? DOOR_WIDTHS.double : Math.min(DOOR_WIDTHS.single, space);
+  if (total < OPENING_SIZE.door.min) return { openings: room.openings, selectId: o.id };
+  const start = end === "end" ? fixed : fixed - total;
+  const lead = room.openings.find((x) => x.id === unit.ids[0]) ?? o;
+  const secondId = unit.ids[1] ?? Math.max(0, ...room.openings.map((x) => x.id)) + 1;
+  const leaves: Opening[] =
+    total === DOOR_WIDTHS.double
+      ? [
+          { ...lead, offset: start, width: total / 2 },
+          { ...lead, id: secondId, offset: start + total / 2, width: total / 2 },
+        ]
+      : [{ ...lead, offset: start, width: total }];
+  return { openings: [...others, ...leaves], selectId: lead.id };
+}
+
+/** Makes a door single or double, growing from its start (or back from its end if the wall runs out). */
+export function setDoorSize(room: Room, o: Opening, size: keyof typeof DOOR_WIDTHS) {
+  const unit = openingUnit(room, o);
+  const w = DOOR_WIDTHS[size];
+  return unit.offset + w <= wallLength(room, o.wall) + 0.01
+    ? dragOpeningEnd(room, o, "end", unit.offset + w)
+    : dragOpeningEnd(room, o, "start", unit.offset + unit.width - w);
+}
+
 /** Where an opening of `width` centred at `along` starts, kept inside the wall and on the grid where possible. */
-export function openingOffset(room: Room, wall: Wall, along: number, width: number): number {
+export function openingOffset(room: Room, wall: WallKey, along: number, width: number): number {
   return clamp(snapToGrid(along - width / 2), 0, Math.max(0, wallLength(room, wall) - width));
 }
 
@@ -202,7 +304,8 @@ export function resizeRoom(room: Room, handle: Handle, x: number, z: number, oth
   const round2 = (v: number) => Math.round(v * 100) / 100;
   const openings = room.openings.map((o) => ({
     ...o,
-    offset: o.offset + (o.wall === "n" || o.wall === "s" ? room.x - left : room.z - top),
+    // A shaped room scales with its box, so its doors and windows only need keeping inside their walls (below).
+    offset: room.shape ? o.offset : o.offset + (wallEdge(room, o.wall).axis === "x" ? room.x - left : room.z - top),
   }));
   const next = { ...room, x: left, z: top, w: round2(right - left), l: round2(bottom - top), openings };
   return { room: { ...next, openings: fitOpenings(next) }, guides };
@@ -223,6 +326,8 @@ function palette(isDark: boolean) {
     muted: isDark ? "rgba(136,136,128,0.8)" : "#777770",
     door: isDark ? "rgba(200,240,160,0.75)" : "rgba(42,122,0,0.7)",
     window: isDark ? "#7cc4ff" : "#2a7ab8",
+    furniture: isDark ? "rgba(196,150,108,0.32)" : "rgba(140,96,60,0.22)",
+    furnitureLine: isDark ? "rgba(222,186,150,0.75)" : "rgba(110,72,44,0.75)",
     danger: isDark ? "#ff7a7a" : "#cc2f2f",
   };
 }
@@ -262,14 +367,22 @@ export function drawPlan(
 
   const overlaps = overlappingIds(rooms);
 
+  /** Traces a room's outline (a rectangle, or a shaped room's corners). */
+  const outline = (r: Room) => {
+    ctx.beginPath();
+    for (const p of shapeCorners(r)) ctx.lineTo(sx(p.x), sy(p.z));
+    ctx.closePath();
+  };
+
   // Floor fills
   for (const r of rooms) {
     ctx.globalAlpha = 0.18;
     ctx.fillStyle = roomColor(r.name);
-    ctx.fillRect(sx(r.x), sy(r.z), r.w * view.scale, r.l * view.scale);
+    outline(r);
+    ctx.fill();
     if (overlaps.has(r.id)) {
       ctx.fillStyle = c.danger;
-      ctx.fillRect(sx(r.x), sy(r.z), r.w * view.scale, r.l * view.scale);
+      ctx.fill();
     }
     ctx.globalAlpha = 1;
   }
@@ -279,17 +392,27 @@ export function drawPlan(
   ctx.lineJoin = "miter";
   for (const r of rooms) {
     ctx.strokeStyle = overlaps.has(r.id) ? c.danger : c.wall;
-    ctx.strokeRect(sx(r.x), sy(r.z), r.w * view.scale, r.l * view.scale);
+    outline(r);
+    ctx.stroke();
   }
 
   // Doors and windows
   const sel = overlay.interactive ? overlay.selectedOpening : null;
   for (const r of rooms) {
     for (const o of r.openings) {
-      drawOpening(ctx, view, r, o, c, wallPx, sel?.roomId === r.id && sel.openingId === o.id ? "selected" : "normal");
+      drawOpening(ctx, view, r, o, c, wallPx, sel?.roomId === r.id && sel.openingId === o.id ? "selected" : "normal", isSecondLeaf(r.openings, o));
     }
   }
-  if (overlay.interactive && overlay.ghost) drawOpening(ctx, view, overlay.ghost.room, overlay.ghost.opening, c, wallPx, "ghost");
+  if (overlay.interactive && overlay.ghost) drawOpening(ctx, view, overlay.ghost.room, overlay.ghost.opening, c, wallPx, "ghost", false);
+
+  if (overlay.furniture) {
+    for (const { room, items } of overlay.furniture) {
+      for (const item of items) {
+        const selected = overlay.interactive && overlay.selectedItem?.roomId === room.id && overlay.selectedItem.itemId === item.id;
+        drawFurniture(ctx, view, room, item, c, selected);
+      }
+    }
+  }
 
   // Labels
   ctx.textAlign = "center";
@@ -298,14 +421,15 @@ export function drawPlan(
     const pw = r.w * view.scale;
     const pl = r.l * view.scale;
     if (pw < 28 || pl < 24) continue;
-    const cx = sx(r.x) + pw / 2;
-    const cy = sy(r.z) + pl / 2;
+    const centre = roomCentre(r);
+    const cx = sx(centre.x);
+    const cy = sy(centre.z);
     ctx.fillStyle = c.text;
     ctx.font = `500 ${Math.min(13, (pw / r.name.length) * 1.4)}px ${c.font}`;
     ctx.fillText(r.name, cx, cy - 7);
     ctx.fillStyle = overlaps.has(r.id) ? c.danger : c.muted;
     ctx.font = `${Math.min(10, pw / 8)}px ${c.font}`;
-    ctx.fillText(overlaps.has(r.id) ? "overlaps another room" : `${r.w}×${r.l} ft`, cx, cy + 8);
+    ctx.fillText(overlaps.has(r.id) ? "overlaps another room" : roomSizeText(r), cx, cy + 8);
   }
 
   if (overlay.interactive) {
@@ -327,12 +451,38 @@ export function drawPlan(
     }
     ctx.restore();
 
+    // Selected door/window/opening: a handle at each end of its unit for resizing
+    const selOpening = overlay.selectedOpening && rooms.find((r) => r.id === overlay.selectedOpening!.roomId);
+    const opening = selOpening?.openings.find((o) => o.id === overlay.selectedOpening!.openingId);
+    if (selOpening && opening) {
+      const unit = openingUnit(selOpening, opening);
+      ctx.strokeStyle = c.accent;
+      ctx.fillStyle = c.accent;
+      ctx.lineWidth = 1.5;
+      for (const p of wallPoints(selOpening, opening.wall, unit.offset, unit.width)) {
+        ctx.beginPath();
+        ctx.arc(sx(p.x), sy(p.z), 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     // Selected room: outline and resize handles
     const selected = rooms.find((r) => r.id === overlay.selectedId);
     if (selected) {
       ctx.strokeStyle = c.accent;
       ctx.lineWidth = 1.5;
-      ctx.strokeRect(sx(selected.x) - 3, sy(selected.z) - 3, selected.w * view.scale + 6, selected.l * view.scale + 6);
+      if (selected.shape) {
+        // A shaped room: its outline, plus a faint box showing what the handles stretch
+        outline(selected);
+        ctx.stroke();
+        ctx.save();
+        ctx.setLineDash([3, 4]);
+        ctx.globalAlpha = 0.5;
+        ctx.strokeRect(sx(selected.x) - 3, sy(selected.z) - 3, selected.w * view.scale + 6, selected.l * view.scale + 6);
+        ctx.restore();
+      } else {
+        ctx.strokeRect(sx(selected.x) - 3, sy(selected.z) - 3, selected.w * view.scale + 6, selected.l * view.scale + 6);
+      }
       for (const p of Object.values(handlePoints(selected))) {
         ctx.fillStyle = c.bg;
         ctx.fillRect(sx(p.x) - 4, sy(p.z) - 4, 8, 8);
@@ -370,8 +520,121 @@ function drawGrid(ctx: CanvasRenderingContext2D, { width, height }: { width: num
 }
 
 /**
- * A door is a gap with a leaf and its swing (hinged at the opening's start, opening into the room);
- * a window is a gap with a thin double line.
+ * One piece of furniture seen from above: its footprint plus a simple symbol (pillows on a bed, a sofa's back and
+ * arms, chairs round a table…). `u` runs across the piece, `v` from its back (against the wall) to its front.
+ */
+function drawFurniture(ctx: CanvasRenderingContext2D, view: Viewport, room: Room, item: FurnitureItem, c: Palette, selected: boolean) {
+  const { w, d } = FURNITURE[item.type];
+  const fp = footprint(item.type, item.rot);
+  const cx = room.x + item.x, cz = room.z + item.z;
+  const at = (u: number, v: number): [number, number] => {
+    const [px, pz] =
+      item.rot === 0 ? [cx + u, cz - d / 2 + v] : item.rot === 90 ? [cx + d / 2 - v, cz + u] : item.rot === 180 ? [cx - u, cz + d / 2 - v] : [cx - d / 2 + v, cz - u];
+    return [view.ox + px * view.scale, view.oy + pz * view.scale];
+  };
+  const shape = (u0: number, u1: number, v0: number, v1: number, fill: string | null) => {
+    ctx.beginPath();
+    for (const [u, v] of [[u0, v0], [u1, v0], [u1, v1], [u0, v1]]) ctx.lineTo(...at(u, v));
+    ctx.closePath();
+    if (fill) {
+      ctx.fillStyle = fill;
+      ctx.fill();
+    }
+    ctx.stroke();
+  };
+  const line = (u0: number, v0: number, u1: number, v1: number) => {
+    ctx.beginPath();
+    ctx.moveTo(...at(u0, v0));
+    ctx.lineTo(...at(u1, v1));
+    ctx.stroke();
+  };
+  ctx.save();
+  ctx.lineWidth = selected ? 2 : 1;
+  ctx.strokeStyle = selected ? c.accent : c.furnitureLine;
+  const fill = c.furniture;
+  const hw = w / 2;
+  switch (item.type) {
+    case "bed_single":
+    case "bed_double":
+    case "bed_queen":
+    case "bed_king": {
+      shape(-hw, hw, 0, d, fill);
+      shape(-hw, hw, 0, 0.3, null);
+      const pillows = w > 4 ? 2 : 1;
+      const pw = (w - 0.8) / pillows - (pillows > 1 ? 0.2 : 0);
+      for (let i = 0; i < pillows; i++) {
+        const u0 = pillows === 1 ? -pw / 2 : i ? 0.1 : -0.1 - pw;
+        shape(u0, u0 + pw, 0.55, 1.6, null);
+      }
+      line(-hw, d * 0.45, hw, d * 0.45);
+      break;
+    }
+    case "sofa":
+      shape(-hw, hw, 0, d, fill);
+      shape(-hw + 0.7, hw - 0.7, 0, 0.8, null);
+      shape(-hw, -hw + 0.7, 0, d, null);
+      shape(hw - 0.7, hw, 0, d, null);
+      for (let i = 1; i < 3; i++) line(-hw + 0.7 + ((w - 1.4) * i) / 3, 0.8, -hw + 0.7 + ((w - 1.4) * i) / 3, d);
+      break;
+    case "dining_table": {
+      const tw = Math.min(5.3, w - 2.6), td = Math.min(3, d - 3);
+      shape(-tw / 2, tw / 2, d / 2 - td / 2, d / 2 + td / 2, fill);
+      for (const u of [-tw * 0.38, tw * 0.38]) {
+        shape(u - 0.7, u + 0.7, d / 2 - td / 2 - 1.6, d / 2 - td / 2 - 0.2, null);
+        shape(u - 0.7, u + 0.7, d / 2 + td / 2 + 0.2, d / 2 + td / 2 + 1.6, null);
+      }
+      for (const s of [-1, 1]) shape(s * (tw / 2 + 0.2), s * (tw / 2 + 1.6), d / 2 - 0.7, d / 2 + 0.7, null);
+      break;
+    }
+    case "study_table":
+      shape(-hw, hw, 0, d, fill);
+      shape(-w * 0.12 - 0.7, -w * 0.12 + 0.7, d + 0.1, d + 1.5, null);
+      break;
+    case "cupboard": {
+      shape(-hw, hw, 0, d, fill);
+      line(-hw, d - 0.15, hw, d - 0.15);
+      const doors = Math.max(2, Math.round(w / 1.6));
+      for (let i = 1; i < doors; i++) line(-hw + (w * i) / doors, 0, -hw + (w * i) / doors, d);
+      break;
+    }
+    case "tv_panel":
+      shape(-hw, hw, 0, d, fill);
+      shape(-2.1, 2.1, 0.05, 0.3, null);
+      break;
+    case "dressing_table":
+      shape(-hw, hw, 0, d, fill);
+      shape(-w * 0.36, w * 0.26, 0, 0.15, null);
+      ctx.beginPath();
+      ctx.arc(...at(-w * 0.12, d + 0.7), 0.6 * view.scale, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+    case "bedside_table":
+      shape(-hw, hw, 0, d, fill);
+      ctx.beginPath();
+      ctx.arc(...at(-w * 0.15, d * 0.45), 0.35 * view.scale, 0, Math.PI * 2);
+      ctx.stroke();
+      break;
+  }
+  // Name, if there's room for it
+  const pw = fp.w * view.scale, pl = fp.l * view.scale;
+  const label = FURNITURE[item.type].label;
+  if (Math.max(pw, pl) > label.length * 5.5 && Math.min(pw, pl) > 12) {
+    ctx.fillStyle = selected ? c.accent : c.furnitureLine;
+    ctx.font = `10px ${c.font}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    const [lx, ly] = [view.ox + cx * view.scale, view.oy + cz * view.scale];
+    ctx.translate(lx, ly);
+    if (pl > pw * 1.4 && pw < label.length * 5.5) ctx.rotate(-Math.PI / 2);
+    ctx.fillText(label, 0, 0);
+  }
+  ctx.restore();
+}
+
+/**
+ * An open gap (no door) is just a break in the wall.
+ * A door is a gap with a leaf and its swing (hinged at the opening's start, opening into the room; the second leaf of
+ * a double door is hinged at its end, so the pair meets in the middle). A window is a gap with a thin double line.
  */
 function drawOpening(
   ctx: CanvasRenderingContext2D,
@@ -380,11 +643,13 @@ function drawOpening(
   o: Opening,
   c: Palette,
   wallPx: number,
-  mode: "normal" | "selected" | "ghost"
+  mode: "normal" | "selected" | "ghost",
+  hingeAtEnd: boolean
 ) {
-  const [a, b] = wallPoints(room, o.wall, o.offset, o.width).map((p) => ({ x: view.ox + p.x * view.scale, y: view.oy + p.z * view.scale }));
+  const ends = wallPoints(room, o.wall, o.offset, o.width).map((p) => ({ x: view.ox + p.x * view.scale, y: view.oy + p.z * view.scale }));
+  const [a, b] = hingeAtEnd ? [ends[1], ends[0]] : ends;
   const len = o.width * view.scale;
-  const n = INWARD[o.wall];
+  const n = INWARD[wallEdge(room, o.wall).dir];
   const ux = (b.x - a.x) / (len || 1);
   const uy = (b.y - a.y) / (len || 1);
 
@@ -405,6 +670,29 @@ function drawOpening(
     ctx.strokeStyle = c.bg;
     ctx.lineWidth = wallPx + 1;
     ctx.stroke();
+  }
+
+  if (o.kind === "open") {
+    // No door: just the gap, with short marks where the wall ends and a faint line where it used to run
+    const half = wallPx / 2 + 2;
+    ctx.globalAlpha = mode === "ghost" ? 0.6 : 1;
+    ctx.strokeStyle = mode === "normal" ? c.wall : c.accent;
+    ctx.lineWidth = mode === "selected" ? 2 : 1.25;
+    ctx.beginPath();
+    for (const p of [a, b]) {
+      ctx.moveTo(p.x - uy * half, p.y + ux * half);
+      ctx.lineTo(p.x + uy * half, p.y - ux * half);
+    }
+    ctx.stroke();
+    ctx.setLineDash([2, 4]);
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = mode === "normal" ? c.muted : c.accent;
+    ctx.beginPath();
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.restore();
+    return;
   }
 
   const color = o.kind === "door" ? c.door : c.window;

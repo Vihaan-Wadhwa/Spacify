@@ -6,32 +6,50 @@ import type { CurrentUser } from "@/lib/auth";
 import { downloadDataUrl } from "@/lib/browser";
 import { DEMO_ROOMS } from "@/lib/demoPlan";
 import type { Access, SaveResult, SavedProject } from "@/lib/projects";
+import { addStairs, bestSpot, removeStairCopies } from "@/lib/floors";
+import { addFurniture, clampToRoom, placeFurniture, typicalFurniture } from "@/lib/furniture";
 import {
-  DEFAULT_DESIGN,
+  DEFAULT_COUNTERTOP,
   DEFAULT_LAYERS,
+  FURNITURE,
   MAX_FLOORS,
   ROOM_DEFAULTS,
   ROOM_SIZE,
+  defaultDesign,
   defaultOpenings,
   describeProject,
   fitOpenings,
   freeSpot,
+  joinedGroups,
   placeRooms,
+  remapOpenings,
+  splitWideDoors,
   totalArea,
+  wallCuts,
+  windowsOutside,
+  WALLS,
   type CameraPreset,
+  type FloorView,
+  type FurnitureItem,
+  type FurnitureType,
   type LayerName,
   type Layers,
   type Room,
   type RoomDesign,
   type RoomDraft,
+  type Rotation,
   type StudioTab,
 } from "@/lib/rooms";
+import type { ItemRef } from "@/lib/scene/SpacifyScene";
 import { HANDOFF_KEY, type Handoff } from "@/lib/start";
+import { ArchitectureView } from "./ArchitectureView";
 import { CanvasOverlays } from "./CanvasOverlays";
 import { ChatView } from "./ChatView";
-import { DesignPanel } from "./DesignPanel";
+import { InteriorPanel } from "./InteriorPanel";
 import { PlanView } from "./PlanView";
+import { RoomList } from "./RoomList";
 import { RoomPanel } from "./RoomPanel";
+import { ShapeModal } from "./ShapeModal";
 import { ThreeCanvas, type ThreeCanvasHandle } from "./ThreeCanvas";
 import { Topbar, type SaveState } from "./Topbar";
 import { TutorialModal } from "./TutorialModal";
@@ -60,9 +78,10 @@ const roomDesigns = (s: Snapshot) => Object.fromEntries(s.rooms.filter((r) => s.
 /** What gets compared to decide whether there are unsaved changes. */
 const snapshotKey = (s: Snapshot) => JSON.stringify({ name: s.name.trim(), floors: s.floors, rooms: s.rooms, designs: roomDesigns(s) });
 
+/** The rooms the page opens with. Wide doors are shown as a pair of leaves (see splitWideDoors). */
 function initialRooms(demo: boolean, project: SavedProject | null): Room[] {
-  if (project) return project.rooms;
-  return demo ? DEMO_ROOMS.map((r, i) => ({ ...r, id: i + 1 })) : [];
+  const rooms = project ? project.rooms : demo ? DEMO_ROOMS.map((r, i) => ({ ...r, id: i + 1 })) : [];
+  return rooms.map((r) => ({ ...r, openings: splitWideDoors(r.openings) }));
 }
 
 /**
@@ -83,7 +102,7 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
   const [projectId, setProjectId] = useState<number | null>(initialProject?.id ?? null);
   const [access, setAccess] = useState<Access>(initialProject?.access ?? "owner");
   const [savedKey, setSavedKey] = useState<string | null>(() =>
-    initialProject ? snapshotKey({ ...initialProject, designs: initialDesigns }) : null
+    initialProject ? snapshotKey({ ...initialProject, rooms: initialRooms(false, initialProject), designs: initialDesigns }) : null
   );
   const [saving, setSaving] = useState(false);
 
@@ -91,11 +110,19 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [layers, setLayers] = useState<Layers>(DEFAULT_LAYERS);
   const [camera, setCamera] = useState<CameraPreset>("persp");
-  const [tab, setTab] = useState<StudioTab>("model");
+  const [tab, setTabState] = useState<StudioTab>("floor");
+  const [floorView, setFloorView] = useState<FloorView>("3d");
+  const [aiOpen, setAiOpen] = useState(false);
   // null = not toggled yet: CSS decides (open on desktop, closed on phones)
   const [panelOpen, setPanelOpen] = useState<boolean | null>(null);
-  const [designOpen, setDesignOpen] = useState(false);
+  const [viewFloor, setViewFloor] = useState<number | null>(null);
+  const [selectedItem, setSelectedItem] = useState<ItemRef | null>(null);
   const [walking, setWalking] = useState(false);
+  const [walkRoomId, setWalkRoomId] = useState<number | null>(null);
+  /** Interior Design is editing every room at once. */
+  const [wholeHome, setWholeHome] = useState(false);
+  /** The room whose shape is being drawn, if any. */
+  const [shapeRoomId, setShapeRoomId] = useState<number | null>(null);
   const [tutorialOpen, setTutorialOpen] = useState(false);
   const [manualMode, setManualMode] = useState(false);
   const [toast, setToast] = useState<string | null>(
@@ -132,7 +159,7 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
       const l = clampSide(r.l);
       return { ...r, w, l, id: nextId.current++, openings: defaultOpenings(w) };
     });
-    setRooms(rooms);
+    setRooms(windowsOutside(rooms));
     setFloorsState(Math.min(MAX_FLOORS, Math.max(1, handoff.floors)));
     setProjectName(handoff.name);
     showToast("Your plan from Start is here. Move walls, add doors and windows, then Save.", 5000);
@@ -145,22 +172,40 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
   }, [loadError, designsError]);
 
   // ─── Room actions ────────────────────────────────────────
-  function addRoom(name: string) {
+  /** Adds a room: on the ground floor against the east side, on an upper floor in the best spot over the floor below. */
+  function addRoom(name: string, floor = 1) {
     const [w, l] = ROOM_DEFAULTS[name] ?? [10, 10];
     const id = nextId.current++;
-    setRooms((prev) => [...prev, { id, name, w, l, h: 10, floor: 1, ...freeSpot(prev, 1), openings: defaultOpenings(w) }]);
+    setRooms((prev) => [...prev, { id, name, w, l, h: 10, floor, ...(floor === 1 ? freeSpot(prev, 1) : bestSpot(prev, floor, w, l)), openings: defaultOpenings(w) }]);
     setSelectedId(id);
   }
 
-  /** Applies a change to one room; doors and windows are kept inside walls that got shorter. */
+  /**
+   * Applies a change to one room. Doors and windows are kept inside walls that got shorter, wide doors become a pair,
+   * and a room moved to another floor goes to the best spot there.
+   */
   function updateRoom(id: number, patch: Partial<Omit<Room, "id">>) {
     setRooms((prev) =>
       prev.map((r) => {
         if (r.id !== id) return r;
         const next = { ...r, ...patch };
-        return { ...next, openings: fitOpenings(next) };
+        if (patch.floor !== undefined && patch.floor !== r.floor && patch.x === undefined) Object.assign(next, bestSpot(prev, patch.floor, r.w, r.l, r.id));
+        return { ...next, openings: splitWideDoors(fitOpenings(next)) };
       })
     );
+  }
+
+  /** Gives a room a drawn shape (null: back to a rectangle) and size; its doors and windows move to the matching walls. */
+  function applyShape(id: number, shape: [number, number][] | null, w: number, l: number) {
+    setRooms((prev) =>
+      prev.map((r) => {
+        if (r.id !== id) return r;
+        const next = { ...r, w, l, shape: shape ?? undefined };
+        return { ...next, openings: splitWideDoors(fitOpenings({ ...next, openings: remapOpenings(r, next) })) };
+      })
+    );
+    setShapeRoomId(null);
+    showToast(shape ? "Shape applied. Doors and windows moved to the matching walls." : "Back to a rectangle.");
   }
 
   function deleteRoom(id: number) {
@@ -175,36 +220,144 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
 
   const selectRoom = useCallback((id: number | null) => {
     setSelectedId(id);
-    if (id !== null) setDesignOpen(true);
+    if (id !== null) setWholeHome(false);
+    setSelectedItem((item) => (item && item.roomId === id ? item : null));
   }, []);
 
+  function setTab(next: StudioTab) {
+    setTabState(next);
+    setAiOpen(false);
+    setWalking(false);
+  }
+
+  /** More floors get a staircase (added on the ground floor if there's none, and repeated above it); fewer move rooms down. */
   function setFloors(n: number) {
+    if (n === floors) return;
     setFloorsState(n);
-    setRooms((prev) => (prev.some((r) => r.floor > n) ? prev.map((r) => (r.floor > n ? { ...r, floor: n } : r)) : prev));
+    if (n > floors) {
+      const before = rooms.length;
+      const next = addStairs(rooms, n, () => nextId.current++);
+      setRooms(next);
+      if (next.length > before) showToast(n - floors > 1 ? `Floors ${floors + 1}–${n} added, with a staircase` : `Floor ${n} added, with a staircase`, 3500);
+      return;
+    }
+    setRooms((prev) => removeStairCopies(prev, n).map((r) => (r.floor > n ? { ...r, floor: n } : r)));
   }
 
   function acceptSketch(found: RoomDraft[]) {
     const maxFloor = Math.min(MAX_FLOORS, Math.max(1, ...found.map((r) => r.floor)));
     setFloorsState((f) => Math.max(f, maxFloor));
-    setRooms(withIds(placeRooms(found.map((r) => ({ ...r, floor: Math.min(r.floor, MAX_FLOORS) })))));
+    setRooms(windowsOutside(withIds(placeRooms(found.map((r) => ({ ...r, floor: Math.min(r.floor, MAX_FLOORS) }))))));
     setDesigns({});
     setSelectedId(null);
+    setSelectedItem(null);
     setManualMode(false);
+    setTab("floor");
+    setFloorView("3d");
   }
 
   function reupload() {
     setRooms([]);
     setDesigns({});
     setSelectedId(null);
+    setSelectedItem(null);
     setManualMode(false);
-    setTab("model");
+    setTab("floor");
   }
 
   function startManually() {
     setManualMode(true);
     setPanelOpen(true);
-    setTab("model");
+    setTab("floor");
     setTimeout(() => addSelectRef.current?.focus(), 300);
+  }
+
+  // ─── Design actions ──────────────────────────────────────
+  /** Rooms joined into one space by removed walls (each room maps to its whole group). */
+  const joined = useMemo(() => joinedGroups(rooms), [rooms]);
+
+  /**
+   * Changes the selected room's design (starting from its defaults the first time). Finishes also go to the rooms it's
+   * joined to by removed walls; with "Entire home", to every room. Furniture and the kitchen stay with the one room.
+   */
+  function changeDesign(patch: Partial<RoomDesign>, roomId = selectedId) {
+    const finishesOnly = !("furniture" in patch) && !("kitchen" in patch);
+    const ids = wholeHome && roomId === selectedId ? rooms.map((r) => r.id) : roomId === null ? [] : finishesOnly ? (joined.get(roomId) ?? [roomId]) : [roomId];
+    const targets = rooms.filter((r) => ids.includes(r.id));
+    if (!targets.length) return;
+    setDesigns((prev) => ({ ...prev, ...Object.fromEntries(targets.map((r) => [r.id, { ...(prev[r.id] ?? defaultDesign(r.name)), ...patch }])) }));
+  }
+
+  const designOf = (room: Room) => designs[room.id] ?? defaultDesign(room.name);
+
+  function setItems(room: Room, update: (items: FurnitureItem[]) => FurnitureItem[]) {
+    changeDesign({ furniture: update(designOf(room).furniture ?? []) }, room.id);
+  }
+
+  function addItem(type: FurnitureType) {
+    const room = rooms.find((r) => r.id === selectedId);
+    if (!room) return;
+    const items = designOf(room).furniture ?? [];
+    const spot = placeFurniture(room, rooms.filter((r) => r.floor === room.floor), items, type);
+    if (!spot) return showToast(`No free space for a ${FURNITURE[type].label.toLowerCase()} in the ${room.name}. Move or remove something first.`, 4000);
+    const id = Math.max(0, ...items.map((i) => i.id)) + 1;
+    setItems(room, (list) => [...list, { id, ...spot }]);
+    setSelectedItem({ roomId: room.id, itemId: id });
+  }
+
+  function addTypical() {
+    const room = rooms.find((r) => r.id === selectedId);
+    if (!room) return;
+    const types = typicalFurniture(room);
+    if (!types.length) return showToast(`There's no typical set for a ${room.name}; add pieces one by one.`, 4000);
+    const { items, skipped } = addFurniture(room, rooms.filter((r) => r.floor === room.floor), designOf(room).furniture ?? [], types);
+    setItems(room, () => items);
+    if (skipped) showToast(`${skipped} piece${skipped > 1 ? "s" : ""} didn't fit.`, 3000);
+  }
+
+  function updateItem(ref: ItemRef, update: (item: FurnitureItem, room: Room) => FurnitureItem | null) {
+    const room = rooms.find((r) => r.id === ref.roomId);
+    if (!room) return;
+    setItems(room, (list) => list.flatMap((i) => (i.id === ref.itemId ? [update(i, room)].filter((x): x is FurnitureItem => !!x) : [i])));
+  }
+
+  const moveItem = (ref: ItemRef, x: number, z: number) => updateItem(ref, (i) => ({ ...i, x, z }));
+  const rotateItem = (ref: ItemRef) =>
+    updateItem(ref, (i, room) => {
+      const rot = ((i.rot + 90) % 360) as Rotation;
+      return { ...i, rot, ...clampToRoom(room, { type: i.type, rot }, i.x, i.z) };
+    });
+  function removeItem(ref: ItemRef) {
+    updateItem(ref, () => null);
+    setSelectedItem(null);
+  }
+
+  function toggleKitchen(on: boolean) {
+    changeDesign({ kitchen: on ? { layout: "L", countertop: DEFAULT_COUNTERTOP } : undefined });
+  }
+
+  /** Picking a room from the Interior list also swings the camera to it. */
+  function pickRoom(id: number) {
+    selectRoom(id);
+    canvasRef.current?.focusRoom(id);
+  }
+
+  /** What the "Entire home" panel shows as picked: a finish only if every room has it. */
+  function homeDesign(): RoomDesign {
+    const all = rooms.map(designOf);
+    const same = <T,>(pick: (d: RoomDesign) => T) => all.every((d) => JSON.stringify(pick(d)) === JSON.stringify(pick(all[0])));
+    return {
+      flooring: same((d) => d.flooring.name) ? all[0].flooring : { ...all[0].flooring, name: "" },
+      walls: same((d) => d.walls) ? all[0].walls : { finish: "paint", color: all[0].walls.color, name: "Mixed" },
+    };
+  }
+
+  /** "Entire home": floors and walls for every room at once. */
+  function pickWholeHome() {
+    setSelectedId(null);
+    setSelectedItem(null);
+    setWholeHome(true);
+    setCameraPreset("persp");
   }
 
   // ─── View actions ────────────────────────────────────────
@@ -217,12 +370,30 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
     canvasRef.current?.setCameraPreset(preset);
   }
 
-  function startWalkthrough() {
-    if (walking) return setWalking(false);
+  /** Walks through the house, starting in `roomId` (or the living room). */
+  function startWalkthrough(roomId: number | null = null) {
     if (!rooms.length) return showToast("Add rooms first");
-    setTab("model");
+    setAiOpen(false);
+    setWalkRoomId(roomId);
     setWalking(true);
   }
+
+  // R rotates and Delete removes the selected piece of furniture (Interior Design tab).
+  const itemKeys = useRef({ rotateItem, removeItem, selectedItem, tab });
+  useEffect(() => {
+    itemKeys.current = { rotateItem, removeItem, selectedItem, tab };
+  });
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const k = itemKeys.current;
+      if (!k.selectedItem || k.tab !== "interior" || e.ctrlKey || e.metaKey) return;
+      if ((e.target as HTMLElement).closest("input, textarea, select")) return;
+      if (e.key === "r" || e.key === "R") k.rotateItem(k.selectedItem);
+      else if (e.key === "Delete" || e.key === "Backspace") k.removeItem(k.selectedItem);
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
 
   /** Records an export in the `exports` table (only for saved projects; failures are ignored). */
   function recordExport(type: "2d" | "3d") {
@@ -337,13 +508,11 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [hasUnsavedWork]);
 
-  function toggleDesignPanel() {
-    setDesignOpen((open) => !open);
-  }
-
   const selectedRoom = rooms.find((r) => r.id === selectedId) ?? null;
   const projectContext = useMemo(() => describeProject(rooms, floors), [rooms, floors]);
-  const showEmptyState = rooms.length === 0 && !manualMode;
+  const showEmptyState = rooms.length === 0 && !manualMode && tab !== "architecture";
+  const in3d = tab === "interior" || (tab === "floor" && floorView === "3d");
+  const togglePanel = () => setPanelOpen((o) => !(o ?? window.innerWidth >= 800));
 
   return (
     <div className="studio">
@@ -351,33 +520,59 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
         user={user}
         tab={tab}
         onTab={setTab}
-        walking={walking}
-        designOpen={designOpen}
+        aiOpen={aiOpen}
         projectName={projectName}
         saveState={saveState}
         onSave={save}
         onProjectName={setProjectName}
-        onTogglePanel={() => setPanelOpen((o) => !(o ?? window.innerWidth >= 800))}
-        onWalkthrough={startWalkthrough}
-        onToggleDesign={toggleDesignPanel}
+        onTogglePanel={togglePanel}
+        onToggleAi={() => setAiOpen((o) => !o)}
         onExport={export3D}
       />
 
+      {tab === "floor" && (
+        <div className="subbar">
+          <div className="segmented" role="group" aria-label="Floor plan view">
+            <button className={floorView === "2d" && !walking ? "active" : undefined} aria-pressed={floorView === "2d" && !walking} onClick={() => { setWalking(false); setFloorView("2d"); }}>2D plan</button>
+            <button className={floorView === "3d" && !walking ? "active" : undefined} aria-pressed={floorView === "3d" && !walking} onClick={() => { setWalking(false); setFloorView("3d"); }}>3D view</button>
+            <button className={walking ? "active" : undefined} aria-pressed={walking} onClick={() => (walking ? setWalking(false) : startWalkthrough(selectedId))}>Walkthrough</button>
+          </div>
+          <span className="subbar-hint">
+            {walking ? "Walking: WASD to move, mouse to look, Esc to stop" : floorView === "2d" ? "Move and resize rooms, add doors and windows" : "Rooms, walls, doors and windows in 3D"}
+          </span>
+        </div>
+      )}
+      {tab === "interior" && (
+        <div className="subbar">
+          <span className="subbar-title">{selectedRoom ? selectedRoom.name : wholeHome ? "Entire home" : "Pick a room"}</span>
+          <span className="subbar-hint">
+            {selectedItem ? "Drag the piece to move it · R to rotate · Delete to remove" : "Click a room to choose its floor, walls, windows, doors and furniture"}
+          </span>
+          <button className="cam-btn" onClick={() => (walking ? setWalking(false) : startWalkthrough(selectedId))}>{walking ? "Stop walking" : "Walk through"}</button>
+        </div>
+      )}
+
       <div className="main">
-        <RoomPanel
-          open={panelOpen}
-          rooms={rooms}
-          floors={floors}
-          selectedId={selectedId}
-          addSelectRef={addSelectRef}
-          onAddRoom={addRoom}
-          onUpdateRoom={updateRoom}
-          onDeleteRoom={deleteRoom}
-          onSelectRoom={selectRoom}
-          onSetFloors={setFloors}
-          onReupload={reupload}
-          onShowTutorial={() => setTutorialOpen(true)}
-        />
+        {tab === "floor" && (
+          <RoomPanel
+            open={panelOpen}
+            rooms={rooms}
+            floors={floors}
+            selectedId={selectedId}
+            addSelectRef={addSelectRef}
+            onAddRoom={addRoom}
+            onUpdateRoom={updateRoom}
+            onDeleteRoom={deleteRoom}
+            onSelectRoom={selectRoom}
+            onEditShape={setShapeRoomId}
+            onSetFloors={setFloors}
+            onReupload={reupload}
+            onShowTutorial={() => setTutorialOpen(true)}
+          />
+        )}
+        {tab === "interior" && (
+          <RoomList open={panelOpen} rooms={rooms} floors={floors} designs={designs} selectedId={selectedId} wholeHome={wholeHome} onSelectRoom={pickRoom} onSelectHome={pickWholeHome} />
+        )}
 
         <div className="canvas-wrap">
           <ThreeCanvas
@@ -387,18 +582,29 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
             layers={layers}
             designs={designs}
             selectedId={selectedId}
-            theme={theme}
+            viewFloor={viewFloor}
+            editFurniture={tab === "interior"}
+            selectedItem={tab === "interior" ? selectedItem : null}
             walking={walking}
+            walkRoomId={walkRoomId}
             onSelect={selectRoom}
             onWalkExit={() => setWalking(false)}
+            onSelectItem={(item) => {
+              setSelectedItem(item);
+              if (item) setSelectedId(item.roomId);
+            }}
+            onMoveItem={moveItem}
           />
 
-          {!walking && (
+          {!walking && in3d && rooms.length > 0 && (
             <CanvasOverlays
+              mode={tab === "floor" ? "plan" : "interior"}
               rooms={rooms}
               floors={floors}
               layers={layers}
               camera={camera}
+              viewFloor={viewFloor}
+              onViewFloor={setViewFloor}
               onToggleLayer={toggleLayer}
               onCamera={setCameraPreset}
               onZoom={(d) => canvasRef.current?.zoom(d)}
@@ -413,22 +619,37 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
             onAddManually={startManually}
           />
 
-          {tab === "plan" && (
+          {tab === "floor" && floorView === "2d" && !walking && (
             <PlanView
               rooms={rooms}
               floors={floors}
               theme={theme}
               projectName={projectName}
               selectedId={selectedId}
+              designs={designs}
+              selectedItem={selectedItem}
               onSelectRoom={setSelectedId}
               onUpdateRoom={updateRoom}
+              onSelectItem={setSelectedItem}
+              onMoveItem={moveItem}
+              onRotateItem={rotateItem}
+              onRemoveItem={removeItem}
               onExported={() => {
                 recordExport("2d");
                 showToast("2D plan exported!");
               }}
             />
           )}
-          <ChatView visible={tab === "ai"} projectContext={projectContext} projectId={projectId} />
+          {tab === "architecture" && <ArchitectureView />}
+          <ChatView visible={aiOpen} projectContext={projectContext} projectId={projectId} />
+
+          {shapeRoomId !== null && rooms.some((r) => r.id === shapeRoomId) && (
+            <ShapeModal
+              room={rooms.find((r) => r.id === shapeRoomId)!}
+              onApply={(shape, w, l) => applyShape(shapeRoomId, shape, w, l)}
+              onClose={() => setShapeRoomId(null)}
+            />
+          )}
 
           {tutorialOpen && (
             <TutorialModal
@@ -442,24 +663,35 @@ export function DesignStudio({ demo, user, initialProject, initialDesigns, loadE
 
           {walking && (
             <div className="wasd-overlay">
-              <div className="wasd-badge">WASD · Move &nbsp;|&nbsp; Mouse · Look &nbsp;|&nbsp; Shift · Sprint</div>
+              <div className="wasd-badge">WASD · Move &nbsp;|&nbsp; Mouse · Look &nbsp;|&nbsp; Shift · Run &nbsp;|&nbsp; Walk up the stairs to change floor</div>
               <div className="crosshair" />
               <button className="wasd-exit" onClick={() => setWalking(false)}>Exit walkthrough (Esc)</button>
             </div>
           )}
         </div>
 
-        <DesignPanel
-          open={designOpen}
-          room={selectedRoom}
-          design={(selectedId !== null && designs[selectedId]) || null}
-          onClose={() => setDesignOpen(false)}
-          onChangeDesign={(patch) => {
-            if (selectedId === null) return;
-            setDesigns((prev) => ({ ...prev, [selectedId]: { ...(prev[selectedId] ?? DEFAULT_DESIGN), ...patch } }));
-          }}
-          onChangeHeight={(h) => selectedId !== null && updateRoom(selectedId, { h })}
-        />
+        {tab === "interior" && (
+          <InteriorPanel
+            open
+            room={selectedRoom}
+            wholeHome={wholeHome && rooms.length > 0}
+            joinedWith={selectedRoom ? (joined.get(selectedRoom.id) ?? []).filter((id) => id !== selectedRoom.id).map((id) => rooms.find((r) => r.id === id)!.name) : []}
+            roomCount={rooms.length}
+            doorCount={selectedRoom ? WALLS.reduce((n, w) => n + wallCuts(selectedRoom, w, rooms.filter((r) => r.floor === selectedRoom.floor)).filter((c) => c.kind === "door").length, 0) : 0}
+            design={selectedRoom ? designOf(selectedRoom) : wholeHome ? homeDesign() : defaultDesign("")}
+            layers={layers}
+            selectedItemId={selectedItem && selectedItem.roomId === selectedId ? selectedItem.itemId : null}
+            onToggleLayer={toggleLayer}
+            onChangeDesign={(patch) => changeDesign(patch)}
+            onAddFurniture={addItem}
+            onAddTypical={addTypical}
+            onSelectItem={(itemId) => setSelectedItem(itemId === null || selectedId === null ? null : { roomId: selectedId, itemId })}
+            onRotateItem={(itemId) => selectedId !== null && rotateItem({ roomId: selectedId, itemId })}
+            onRemoveItem={(itemId) => selectedId !== null && removeItem({ roomId: selectedId, itemId })}
+            onToggleKitchen={toggleKitchen}
+            onWalk={() => startWalkthrough(selectedId)}
+          />
+        )}
       </div>
 
       <div className={`toast${toast ? " show" : ""}`} role="status">{toast}</div>

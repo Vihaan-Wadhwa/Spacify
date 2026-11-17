@@ -47,8 +47,24 @@ try {
       await client.query("COMMIT");
       console.log("• Added the openings table (doors and windows) and gave existing rooms their door and window");
     }
+    // Openings that are open walls (no door) came later; older databases only allow doors and windows.
+    const { rows: kinds } = await client.query("SELECT pg_get_constraintdef(oid) AS def FROM pg_constraint WHERE conname = 'openings_kind_check'");
+    const openNeeded = !kinds[0]?.def.includes("'open'");
+    if (openNeeded) {
+      await client.query(await sql("upgrade-open.sql"));
+      console.log("• Openings can now be open walls (a gap with no door)");
+    }
+    // Rooms that aren't rectangles came later still.
+    const { rows: shapes } = await client.query("SELECT NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name = 'rooms' AND column_name = 'shape') AS needed");
+    if (shapes[0].needed) {
+      await client.query("BEGIN");
+      await client.query(await sql("upgrade-shapes.sql"));
+      await client.query("COMMIT");
+      console.log("• Rooms can now be shapes other than rectangles");
+    }
+    const changed = upgrade[0].needed || openNeeded || shapes[0].needed;
     const { rows: counts } = await client.query("SELECT (SELECT count(*) FROM users) AS users, (SELECT count(*) FROM projects) AS projects");
-    console.log(`✓ PostgreSQL ${upgrade[0].needed ? "up to date" : "already set up"} (${counts[0].users} users, ${counts[0].projects} projects).${upgrade[0].needed ? "" : " Nothing to do."}`);
+    console.log(`✓ PostgreSQL ${changed ? "up to date" : "already set up"} (${counts[0].users} users, ${counts[0].projects} projects).${changed ? "" : " Nothing to do."}`);
     console.log("  To wipe it and start again: npm run db:reset");
   } else {
     await client.query("BEGIN");

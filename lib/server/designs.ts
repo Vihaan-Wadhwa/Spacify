@@ -39,8 +39,11 @@ async function designs(): Promise<Collection<DesignDoc>> {
 /** The design part of a document, with keys in a fixed order (the design page compares designs as JSON). */
 function toDesign(d: RoomDesign): RoomDesign {
   return {
-    walls: { finish: d.walls.finish, color: d.walls.color },
+    walls: { finish: d.walls.finish, color: d.walls.color, ...(d.walls.name && { name: d.walls.name }) },
     flooring: { material: d.flooring.material, name: d.flooring.name, color: d.flooring.color },
+    ...(d.windows && { windows: { type: d.windows.type, frame: d.windows.frame, color: d.windows.color, polish: d.windows.polish } }),
+    ...(d.doors && { doors: { style: d.doors.style, color: d.doors.color, polish: d.doors.polish } }),
+    ...(d.furniture && { furniture: d.furniture.map((f) => ({ id: f.id, type: f.type, x: f.x, z: f.z, rot: f.rot })) }),
     ...(d.ceiling && { ceiling: { type: d.ceiling.type } }),
     ...(d.lighting && { lighting: d.lighting.map((l) => ({ type: l.type, count: l.count })) }),
     ...(d.kitchen && { kitchen: { layout: d.kitchen.layout, countertop: d.kitchen.countertop } }),
