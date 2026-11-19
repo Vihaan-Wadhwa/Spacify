@@ -1,0 +1,438 @@
+=====================================================================
+ SPACIFY - DBMS VIVA NOTES + LIVE DEMO GUIDE
+=====================================================================
+Contents
+  1. Logins and how to run
+  2. Which databases are used, and why
+  3. PostgreSQL tables and relationships
+  4. Constraints, triggers, function, view
+  5. The 13 example SQL queries
+  6. MongoDB
+  7. How the two databases work together (and the weakness)
+  8. Security
+  9. LIVE DEMO - single user (UPDATE, DELETE, CASCADE, ALTER, DROP)
+ 10. LIVE DEMO - two browsers (share, revoke, logout from SQL)
+ 11. Reset after the demo
+ 12. Likely viva questions and answer\=][-p0rt54ef5p0-[=\=]-[p0rt4e3w
+
+
+=====================================================================
+ 1. LOGINS AND HOW TO RUN
+=====================================================================
+App login (username = email):
+    demo@spacify.in      password: spacify123   (owns "Sample 2BHK")
+    rahul@example.com    password: rahul123     (owns "Rahul's Villa")
+
+PostgreSQL:  user spacify | password spacify | database spacify | port 5432
+MongoDB:     no username or password | database spacify | port 27017
+
+Start everything (project folder: Documents/Projects/Spacify/Spacify):
+    docker compose up -d        # PostgreSQL + MongoDB (open Docker Desktop first)
+    npm run db:setup            # safe to re-run; will not wipe existing data
+    npm run dev                 # app at http://localhost:3000
+
+Open the SQL shell:
+    docker compose exec postgres psql -U spacify -d spacify
+
+Open the Mongo shell:
+    docker compose exec mongo mongosh spacify
+
+psql shortcuts:  \dt  list tables | \d rooms  show one table's structure
+                 \x  toggle expanded display | \q  quit
+                 End every command with ;   (prompt "spacify-#" = missing ;)
+
+
+=====================================================================
+ 2. WHICH DATABASES ARE USED, AND WHY
+=====================================================================
+(A) PostgreSQL 16  - relational / SQL
+    Stores: users, projects, rooms, furniture, openings, exports,
+            sessions, AI chat history, sharing.
+    Why:
+      - Data is structured and related (user -> project -> room -> furniture).
+      - The database itself enforces integrity: foreign keys, CHECK, UNIQUE,
+        ON DELETE CASCADE.
+      - ACID transactions: saving a project rewrites many rooms; it must fully
+        succeed or fully roll back. SELECT ... FOR UPDATE stops concurrent
+        saves from corrupting data.
+      - Triggers, a function and a view keep derived data and access control
+        correct automatically.
+      - Passwords and sessions need consistent, transactional storage.
+
+(B) MongoDB 7  - NoSQL / document store
+    Stores: one "room_designs" document per room (wall finish, flooring,
+            windows, doors, ceiling, lighting, kitchen details).
+    Why:
+      - The shape varies by room type. Only kitchens have a "kitchen" block.
+        In SQL that means many NULL columns or extra tables.
+      - Data is nested (walls, flooring, doors are sub-objects) - no joins.
+      - It changes often; no ALTER TABLE migration for a new option.
+      - Still validated: a $jsonSchema validator enforces required fields,
+        allowed values and hex colours. Schema-less does not mean unchecked.
+      - A unique index on room_id makes lookups an IXSCAN, not a COLLSCAN.
+
+(C) ChromaDB (vector DB) - PLANNED ONLY, NOT BUILT
+    ai_suggestions.chroma_id and some code comments ("Task 5") refer to a
+    future similarity search over past AI answers (RAG). The routes
+    app/api/ai and app/api/chat are stubs; there is no Chroma service in
+    docker-compose.yml. Say "planned future work". Do not claim it is done.
+
+One-line answer:
+    "PostgreSQL holds the structured, relational, integrity-critical data.
+     MongoDB holds the flexible, nested room-finish data whose shape varies
+     by room type. Each database does what it is best at - polyglot
+     persistence."
+
+
+=====================================================================
+ 3. POSTGRESQL TABLES AND RELATIONSHIPS   (db/schema.sql)
+=====================================================================
+9 tables:
+  users           id PK | name | email UNIQUE | password (bcrypt hash) | created_at
+  projects        id PK | user_id FK | name | floors (1-3) | total_area (derived)
+                  | created_at | updated_at
+  rooms           id PK | project_id FK | room_type | width | length | height |
+                  floor | position_x | position_z | shape (JSONB) | area
+  furniture       id PK | room_id FK | type (sofa|bed|table|chair|wardrobe|desk) |
+                  name | width | length | height | position_x/y/z | rotation_y
+  openings        id PK | room_id FK | kind (door|window|open) | wall |
+                  wall_offset | width              (doors and windows)
+  exports         id PK | project_id FK | user_id FK | type ('2d'|'3d') | exported_at
+  sessions        id PK | user_id FK | token UNIQUE (SHA-256 hash) | expires_at |
+                  created_at
+  ai_suggestions  id PK | project_id FK | user_id FK | user_prompt | ai_response |
+                  chroma_id UNIQUE | created_at
+  shared_projects id PK | project_id FK | shared_with FK | permission (view|edit)
+                  | shared_at   UNIQUE(project_id, shared_with)
+
+Relationships:
+  users    1 --- N projects          (a user owns many projects)
+  projects 1 --- N rooms             (cascade delete)
+  rooms    1 --- N furniture         (cascade delete)
+  rooms    1 --- N openings          (cascade delete)
+  users    1 --- N sessions          (one user, several devices)
+  projects 1 --- N exports           (each export also names the user)
+  projects 1 --- N ai_suggestions    (each also names the user who asked)
+  users    M --- N projects          via shared_projects (junction table)
+  rooms    1 --- 1 room_designs      (MongoDB, by id only - NOT a real FK)
+
+ER diagram image: Documents/Projects/Spacify/Spacify_ER_Diagram.png
+
+
+=====================================================================
+ 4. CONSTRAINTS, TRIGGERS, FUNCTION, VIEW
+=====================================================================
+Constraints
+  PRIMARY KEY   INT GENERATED ALWAYS AS IDENTITY on every table
+  FOREIGN KEY   all ON DELETE CASCADE (deleting a project removes its rooms,
+                furniture, openings, exports, suggestions, shares)
+  NOT NULL, UNIQUE, DEFAULT used throughout
+  CHECK         width/length > 0 and <= 100 | floors BETWEEN 1 AND 3 |
+                expires_at > created_at | email must be lowercase |
+                furniture.type and shared permission restricted to a list |
+                openings.wall must match the regex ^([nesw]|[0-9]{1,2})$
+  INDEXES       on every foreign key (e.g. idx_rooms_project) -> faster joins
+                and cascades
+
+Triggers (3)
+  T1 trg_projects_updated_at       BEFORE UPDATE on projects
+        sets updated_at = now()
+  T2 trg_rooms_total_area          AFTER INSERT/UPDATE/DELETE on rooms
+        recomputes projects.total_area = SUM of room areas
+        (deliberate denormalisation: project list needs no join)
+  T3 trg_shared_projects_not_owner BEFORE INSERT/UPDATE on shared_projects
+        raises an exception if you share a project with its own owner
+
+Function
+  project_access(user_id, project_id)  ->  'owner' | 'edit' | 'view' | NULL
+  Used by the API for authorization.
+
+View
+  project_summary = projects JOIN users LEFT JOIN rooms GROUP BY project
+  (owner name + room count per project; what the projects page lists)
+
+Transactions in the app
+  lib/server/db.ts wraps work in BEGIN ... COMMIT and ROLLBACKs on error.
+  lib/server/projects.ts uses SELECT ... FOR UPDATE to lock a project's rooms
+  while saving. All queries are parameterised ($1) -> no SQL injection.
+
+
+=====================================================================
+ 5. THE 13 EXAMPLE QUERIES   (db/queries.sql)
+=====================================================================
+ Q1  View with JOIN + GROUP BY (project_summary)
+ Q2  UNION ALL of owned + shared projects
+ Q3  CROSS JOIN + calling project_access()
+ Q4  GROUP BY two columns (area per floor per project)
+ Q5  HAVING (projects with more than 5 rooms)
+ Q6  CORRELATED SUBQUERY (rooms bigger than their project's average)
+ Q7  LEFT JOIN ... WHERE IS NULL (rooms with no furniture)
+ Q8  Computed percentage with ROUND (furniture footprint / floor area)
+ Q9  Scalar subqueries in SELECT (exports + AI questions per user)
+ Q10 Trigger demo inside a transaction that is ROLLED BACK
+ Q11 LEFT JOIN + COUNT(...) FILTER (active sessions per user)
+ Q12 The session lookup the app runs on every request
+ Q13 DELETE ... RETURNING (remove expired sessions)
+
+Run them:   \i db/queries.sql     (inside psql, from the project folder)
+  or:       docker compose exec -T postgres psql -U spacify -d spacify < db/queries.sql
+
+
+=====================================================================
+ 6. MONGODB   (db/mongo-validator.json, mongo-seed.json, mongo-queries.js)
+=====================================================================
+Collection room_designs - one document per room.
+  room_id, project_id  = PostgreSQL ids (reference by id, not a real FK)
+  walls{finish,color,name}, flooring{material,name,color}, windows{}, doors{},
+  ceiling{type}, lighting[], furniture[], kitchen{layout,countertop} (kitchens
+  only), updated_by (users.id), updated_at
+
+Validation: $jsonSchema -> required fields, enums (e.g. wall finish in
+  paint|tiles|marble|wallpaper|wood_panel), hex colour pattern ^#[0-9a-fA-F]{6}$,
+  additionalProperties: false.
+
+Indexes: UNIQUE on room_id, normal index on project_id.
+
+Queries in mongo-queries.js:
+  1 $group + $sum + $addToSet        rooms per flooring material
+  2 two-stage $group                 most common wall finish per room type
+  3 $match + $exists                 kitchens by layout
+  4 find with a date filter          designs updated in the last 7 days
+  5 explain("executionStats")        IXSCAN on room_id_1, 1 doc examined
+
+Run:  docker compose exec -T mongo mongosh --quiet spacify --file /dev/stdin < db/mongo-queries.js
+
+
+=====================================================================
+ 7. HOW THE TWO DATABASES WORK TOGETHER (AND THE WEAKNESS)
+=====================================================================
+Saving a project is two steps (lib/server/designs.ts):
+   1) PostgreSQL transaction commits   2) designs written to MongoDB
+Deleting a project: Postgres cascade first, then deleteMany({project_id}) in Mongo.
+
+WEAKNESS - no transaction spans both databases.
+  If Mongo is down at the wrong moment, Postgres commits but Mongo does not:
+  the user gets a warning, and orphan or missing designs can result.
+  PostgreSQL is the source of truth.
+  Detect:  npm run db:check          (lists orphans + rooms with no design)
+  Fix:     npm run db:check -- --fix (deletes orphan designs)
+  A proper fix would be the outbox pattern or two-phase commit - overkill here.
+
+
+=====================================================================
+ 8. SECURITY
+=====================================================================
+  - Passwords: bcrypt (salted, slow). A dummy hash is compared even when the
+    email does not exist, so response time does not reveal which emails exist.
+  - Session cookie holds a random token; only its SHA-256 hash is stored in
+    sessions.token. A leaked DB dump gives no usable cookie.
+  - Sessions last 30 days; expiry is checked in the query (expires_at > now()).
+  - Parameterised queries everywhere -> no SQL injection.
+  - Access control via project_access(): owner / edit / view / none.
+
+
+=====================================================================
+ 9. LIVE DEMO - SINGLE USER   (UPDATE, DELETE, CASCADE, ALTER, DROP)
+=====================================================================
+SETUP: browser on the left, terminal on the right.
+  Browser: http://localhost:3000 -> log in demo@spacify.in / spacify123
+           -> /projects -> open "Sample 2BHK" (6 rooms, total area 914).
+  Terminal: docker compose exec postgres psql -U spacify -d spacify
+
+Room ids in Sample 2BHK: 1 Living, 2 Master Bedroom, 3 Kitchen, 4 Bedroom 2,
+                         5 Bathroom, 6 Dining
+
+STEP 0  Show the tables:
+        \dt
+        SELECT id, name, email, left(password,20) AS password_hash FROM users;
+        SAY: passwords are bcrypt hashes, never plain text.
+
+STEP 1  Show the data the UI reads:
+        SELECT id, room_type, width, length FROM rooms WHERE project_id = 1;
+        SELECT name, total_area FROM projects WHERE id = 1;       -- 914.00
+
+STEP 2  UPDATE (and the trigger):
+        UPDATE rooms SET width = 30 WHERE id = 1;                 -- Living Room 18 -> 30
+        SELECT total_area, updated_at FROM projects WHERE id = 1;
+        -> refresh browser: Living Room is wider, area changed.
+        SAY: "I never touched total_area - trigger T2 recalculated it, and
+              T1 updated updated_at."
+        Constraint demo:
+        UPDATE rooms SET width = -5 WHERE id = 1;   -- ERROR: violates CHECK
+
+STEP 3  DELETE:
+        DELETE FROM rooms WHERE id = 5;                           -- Bathroom
+        SELECT total_area FROM projects WHERE id = 1;             -- drops by 48
+        -> refresh browser: Bathroom is gone.
+        SAY: "The UI shows exactly what is in the database."
+
+STEP 4  CASCADE:
+        SELECT count(*) FROM furniture WHERE room_id = 1;         -- 2
+        DELETE FROM rooms WHERE id = 1;                           -- Living Room
+        SELECT count(*) FROM furniture WHERE room_id = 1;         -- 0
+        SAY: "I deleted only the room; ON DELETE CASCADE deleted its furniture."
+
+STEP 5  ALTER and DROP (use a throwaway table - do NOT drop rooms/projects):
+        ALTER TABLE rooms ADD COLUMN demo_note TEXT;
+        \d rooms                                  -- new column is listed
+        ALTER TABLE rooms DROP COLUMN demo_note;
+        CREATE TABLE demo_tmp (id INT);
+        DROP TABLE demo_tmp;
+        If sir wants to see the UI break: DROP TABLE furniture CASCADE;  then
+        refresh. (Not tested - expect an error or broken page.)
+        Then run the restore script (section 11).
+
+STEP 6  MongoDB (second terminal: docker compose exec mongo mongosh spacify):
+        db.room_designs.find({room_id: 3}, {walls:1, flooring:1, kitchen:1})
+        db.room_designs.updateOne({room_id: 3}, {$set: {"walls.color": "#ff0000"}})
+        db.room_designs.updateOne({room_id: 3}, {$set: {"walls.color": "red"}})
+              -> rejected by the validator (needs a hex colour)
+        -> open the Kitchen in the design view: wall colour should change.
+
+STEP 7  Orphans (after deleting a room in step 3 or 4):
+        npm run db:check
+        SAY: "Postgres and Mongo are not linked by a real foreign key, so the
+              deleted room's Mongo design is now an orphan; this script finds it."
+
+
+=====================================================================
+10. LIVE DEMO - TWO BROWSERS   (sharing, revoking, logout from SQL)
+=====================================================================
+SETUP: Safari = demo@spacify.in (user 1), Chrome = rahul@example.com (user 2).
+       (Swap the names if yours are the other way round.)
+       Project ids: 1 = Sample 2BHK, 2 = Rahul's Villa.
+
+Starting state of /projects:
+   Safari : Sample 2BHK (owned) + "Shared with me": Rahul's Villa
+   Chrome : Rahul's Villa only
+   (the one existing row in shared_projects gives user 1 edit access to project 2)
+
+STEP 1  Share a project (INSERT) - Rahul cannot see Sample 2BHK yet:
+        INSERT INTO shared_projects (project_id, shared_with, permission)
+        VALUES (1, 2, 'view');
+        -> refresh Chrome: "Shared with me" lists Sample 2BHK; opening it
+           should be read-only (permission = view).
+
+STEP 2  Change the permission (UPDATE):
+        UPDATE shared_projects SET permission = 'edit'
+         WHERE project_id = 1 AND shared_with = 2;
+        -> refresh Chrome, reopen: Rahul can edit now.
+
+STEP 3  Bad data is rejected:
+        INSERT INTO shared_projects (project_id, shared_with, permission)
+        VALUES (1, 1, 'view');
+           -- ERROR: cannot be shared with its owner        (trigger T3)
+        INSERT INTO shared_projects (project_id, shared_with, permission)
+        VALUES (1, 2, 'view');
+           -- ERROR: duplicate key                  (UNIQUE project_id, shared_with)
+
+STEP 4  Revoke access (DELETE):
+        DELETE FROM shared_projects WHERE project_id = 1 AND shared_with = 2;
+        -> refresh Chrome: Sample 2BHK is gone from Rahul's list.
+
+STEP 5  One database, both users see the same change:
+        Open Rahul's Villa in BOTH browsers, then:
+        DELETE FROM rooms WHERE id = 14;                       -- the Balcony
+        -> refresh both: the Balcony disappears in Safari and in Chrome.
+        SAY: "Two users, two browsers, one database, one source of truth."
+
+STEP 6  Log a user out from SQL (most dramatic):
+        SELECT u.email, left(s.token,12) AS token_hash, s.expires_at
+          FROM sessions s JOIN users u ON u.id = s.user_id;
+        DELETE FROM sessions WHERE user_id = 2;                -- kill Rahul's session
+        -> refresh Chrome: Rahul should be sent to the login page; Safari
+           stays logged in.
+        SAY: "The login is a row in the sessions table. The cookie only holds a
+              token. Delete the row and the login is dead."
+
+NOTE: the UI behaviour in these steps was not run end-to-end while writing this;
+      the code supports it ("Shared with me" section, read-only mode, session
+      check on each request). Do ONE dry run before showing sir.
+
+
+=====================================================================
+11. RESET AFTER THE DEMO
+=====================================================================
+A snapshot of both databases is in:  Documents/Projects/Spacify/demo-backup/
+Restore everything (PostgreSQL + MongoDB) to the original demo state:
+
+    /Users/chiranthr/Documents/Projects/Spacify/demo-backup/restore.sh
+
+Then refresh the browser. You may need to log in again (restoring replaces the
+sessions table). Run it once BEFORE the demo for a clean start.
+
+Original demo state: 4 users, 2 projects, 14 rooms, 8 furniture items,
+28 openings, 14 Mongo room designs (every room has one), 1 share
+(project 2 -> user 1, edit).
+
+Other reset options:
+    npm run db:setup           safe re-run; does nothing if already set up
+    npm run db:reset           WIPES everything and reseeds (loses extra users)
+    npm run db:check           compare Postgres rooms with Mongo designs
+
+
+=====================================================================
+12. LIKELY VIVA QUESTIONS AND ANSWERS
+=====================================================================
+Q  Why two databases?
+A  Relational data with integrity -> PostgreSQL. Flexible nested documents
+   whose shape varies by room type -> MongoDB (kitchens have extra fields).
+
+Q  Why denormalise total_area?
+A  Avoids a join on the projects list. A trigger keeps it correct. It is a
+   deliberate, documented trade-off.
+
+Q  Which normal form?
+A  Roughly 3NF. The exception is total_area, intentionally derived.
+
+Q  Why a junction table for sharing?
+A  Users and projects are many-to-many; that cannot be stored in one column.
+
+Q  ON DELETE CASCADE vs RESTRICT?
+A  CASCADE removes child rows automatically; RESTRICT blocks the delete while
+   children exist. Here children have no meaning without the parent.
+
+Q  Explain ACID with an example.
+A  Saving a project: Atomic (all rooms saved or none), Consistent (CHECKs and
+   FKs hold), Isolated (FOR UPDATE lock), Durable (committed data survives).
+
+Q  Why SELECT ... FOR UPDATE?
+A  Stops two concurrent saves from corrupting a project's rooms.
+
+Q  Why are indexes on foreign keys?
+A  Faster joins, and faster cascading deletes (finding the child rows).
+
+Q  What happens if Mongo is down while saving?
+A  Postgres commits, the user sees a warning, and db:check finds the
+   inconsistency later. No distributed transaction exists - known limitation.
+
+Q  Why hash the session token?
+A  A stolen database dump then contains no usable login cookie.
+
+Q  Why compare a dummy hash for unknown emails?
+A  So the response time does not reveal whether an email is registered.
+
+Q  SQL injection?
+A  All queries are parameterised ($1, $2) - input is never concatenated into SQL.
+
+Q  Is ChromaDB used?
+A  Planned (vector search over past AI answers) but not implemented yet.
+
+Q  Difference between DELETE, DROP and TRUNCATE?
+A  DELETE removes rows (can be rolled back, fires triggers). TRUNCATE empties
+   a table fast. DROP removes the whole table structure.
+
+Q  Difference between UPDATE and ALTER?
+A  UPDATE changes data (rows). ALTER changes structure (columns/constraints).
+
+Q  What is a view?
+A  A saved query that behaves like a table. project_summary joins projects,
+   users and rooms.
+
+Q  What is a trigger?
+A  Code that runs automatically on INSERT/UPDATE/DELETE. Ours keep updated_at
+   and total_area correct and block sharing a project with its owner.
+
+=====================================================================
+ Good luck with the viva!
+=====================================================================
